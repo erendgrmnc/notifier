@@ -410,6 +410,11 @@
         <option value="30">in 30 seconds</option>
         <option value="120">in 2 minutes</option>
       </select>
+      <label for="send-method">Send as</label>
+      <select id="send-method">
+        <option value="individual" selected>individual requests</option>
+        <option value="batch">one batch request (≤1000)</option>
+      </select>
       <div class="row">
         <button class="primary" onclick="sendBurst(1)">Send 1</button>
         <button onclick="sendBurst(10)">×10</button>
@@ -1067,7 +1072,44 @@ function sendCustom() {
   sendBurst(count);
 }
 
+// sendBatch exercises the real batch endpoint: one request carrying all
+// items, with per-index results and a shared batch_id.
+async function sendBatch(count) {
+  const result = document.getElementById("send-result");
+  if (count > 1000) {
+    result.textContent = "batch mode is capped at 1000 (API limit)";
+    return;
+  }
+  if (busy) return;
+  busy = true;
+  setControlsDisabled(true);
+
+  const base = sendPayload();
+  const items = Array.from({ length: count }, (_, index) =>
+    base.content && count > 1 ? { ...base, content: base.content + " #" + (index + 1) } : { ...base });
+
+  result.textContent = "sending batch of " + count + "…";
+  try {
+    const { status, body } = await post("/api/v1/notifications/batch", { notifications: items });
+    if (status === 201) {
+      result.textContent = "batch " + body.batch_id.slice(0, 8) + ": accepted " + body.accepted +
+        (body.rejected ? ", rejected " + body.rejected : "");
+    } else {
+      result.textContent = body.error || ("batch failed: " + status);
+    }
+  } catch (err) {
+    result.textContent = "batch failed: " + err.message;
+  } finally {
+    busy = false;
+    setControlsDisabled(false);
+  }
+  refresh();
+}
+
 async function sendBurst(count) {
+  if (document.getElementById("send-method").value === "batch") {
+    return sendBatch(count);
+  }
   if (busy) return;
   busy = true;
   setControlsDisabled(true);
