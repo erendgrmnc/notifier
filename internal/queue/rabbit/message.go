@@ -8,3 +8,10 @@ import "github.com/google/uuid"
 type Message struct {
 	NotificationID uuid.UUID `json:"notification_id"`
 }
+
+// DeadLetterMessage is the DLQ payload; the database row remains the
+// source of truth, this exists for queue-side inspection.
+type DeadLetterMessage struct {
+	NotificationID uuid.UUID `json:"notification_id"`
+	Reason         string    `json:"reason"`
+}

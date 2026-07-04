@@ -24,6 +24,33 @@ func TestAMQPPriorityMapping(t *testing.T) {
 	}
 }
 
+func TestTierForAttempt(t *testing.T) {
+	testCases := []struct {
+		attempt int
+		want    string
+	}{
+		{attempt: 1, want: "notifications.retry.5s"},
+		{attempt: 2, want: "notifications.retry.30s"},
+		{attempt: 3, want: "notifications.retry.120s"},
+		{attempt: 4, want: "notifications.retry.120s"}, // clamped to longest
+		{attempt: 0, want: "notifications.retry.5s"},   // defensive floor
+	}
+
+	for _, tc := range testCases {
+		if got := TierForAttempt(tc.attempt); got.Name != tc.want {
+			t.Errorf("TierForAttempt(%d) = %s, want %s", tc.attempt, got.Name, tc.want)
+		}
+	}
+}
+
+func TestRetryTiersEscalate(t *testing.T) {
+	for i := 1; i < len(RetryTiers); i++ {
+		if RetryTiers[i].TTL <= RetryTiers[i-1].TTL {
+			t.Errorf("tier %d TTL %v does not escalate over %v", i, RetryTiers[i].TTL, RetryTiers[i-1].TTL)
+		}
+	}
+}
+
 func TestAMQPPrioritiesOrderCorrectly(t *testing.T) {
 	if !(amqpPriorityHigh > amqpPriorityNormal && amqpPriorityNormal > amqpPriorityLow) {
 		t.Errorf("priority values do not order high > normal > low: %d, %d, %d",

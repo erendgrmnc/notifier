@@ -53,36 +53,70 @@ func NewPublisher(conn *amqp.Connection) (*Publisher, error) {
 // PublishCreated routes a notification message to its channel work queue
 // and waits for the broker confirm.
 func (publisher *Publisher) PublishCreated(ctx context.Context, notification domain.Notification) error {
+	return publisher.publishNotification(ctx, DirectExchange, notification)
+}
+
+// PublishRetry places a notification on the backoff tier matching the
+// failed attempt; the tier's TTL routes it back to its work queue.
+func (publisher *Publisher) PublishRetry(ctx context.Context, notification domain.Notification, attempt int) error {
+	return publisher.publishNotification(ctx, TierForAttempt(attempt).Name, notification)
+}
+
+// PublishDeadLetter records an exhausted or permanently failed delivery
+// on the DLQ for inspection.
+func (publisher *Publisher) PublishDeadLetter(ctx context.Context, notification domain.Notification, reason string) error {
+	body, err := json.Marshal(DeadLetterMessage{
+		NotificationID: notification.ID,
+		Reason:         reason,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal dead-letter message: %w", err)
+	}
+	return publisher.publishConfirmed(ctx, DeadLetterExchange, "", amqp.Publishing{
+		ContentType:  "application/json",
+		DeliveryMode: amqp.Persistent,
+		Body:         body,
+	})
+}
+
+// publishNotification sends the standard queue message for a notification
+// to the given exchange, keyed by channel so the routing key survives
+// retry-tier expiry.
+func (publisher *Publisher) publishNotification(ctx context.Context, exchange string, notification domain.Notification) error {
 	body, err := json.Marshal(Message{NotificationID: notification.ID})
 	if err != nil {
 		return fmt.Errorf("marshal queue message: %w", err)
 	}
+	return publisher.publishConfirmed(ctx, exchange, string(notification.Channel), amqp.Publishing{
+		ContentType:  "application/json",
+		DeliveryMode: amqp.Persistent,
+		Priority:     amqpPriority(notification.Priority),
+		Body:         body,
+	})
+}
 
+// publishConfirmed publishes one message and waits for the broker confirm.
+func (publisher *Publisher) publishConfirmed(ctx context.Context, exchange, routingKey string, publishing amqp.Publishing) error {
 	publisher.mu.Lock()
 	defer publisher.mu.Unlock()
 
 	confirmation, err := publisher.channel.PublishWithDeferredConfirmWithContext(ctx,
-		DirectExchange,
-		string(notification.Channel), // routing key
-		false,                        // mandatory
-		false,                        // immediate
-		amqp.Publishing{
-			ContentType:  "application/json",
-			DeliveryMode: amqp.Persistent,
-			Priority:     amqpPriority(notification.Priority),
-			Body:         body,
-		},
+		exchange,
+		routingKey,
+		false, // mandatory
+		false, // immediate
+		publishing,
 	)
 	if err != nil {
-		return fmt.Errorf("publish notification %s: %w", notification.ID, err)
+		return fmt.Errorf("publish to %s: %w", exchange, err)
 	}
 
 	acked, err := confirmation.WaitContext(ctx)
 	if err != nil {
-		return fmt.Errorf("await publish confirm for %s: %w", notification.ID, err)
+		return fmt.Errorf("await publish confirm from %s: %w", exchange, err)
 	}
 	if !acked {
-		return fmt.Errorf("broker nacked publish for %s", notification.ID)
+		return fmt.Errorf("broker nacked publish to %s", exchange)
 	}
 	return nil
 }
