@@ -2,6 +2,10 @@
 
 .PHONY: up down test lint run deploy smoke
 
+# The race detector needs cgo (a C toolchain). Detect instead of assume,
+# so `make test` works on machines without gcc; CI always runs -race.
+RACEFLAG := $(if $(filter 1,$(shell go env CGO_ENABLED)),-race,)
+
 ## up: start the full stack (postgres, rabbitmq, api, worker)
 up:
 	docker compose up -d --build
@@ -10,9 +14,10 @@ up:
 down:
 	docker compose down
 
-## test: unit tests with the race detector (requires cgo; CI enforces this)
+## test: unit tests, with the race detector when cgo is available
 test:
-	go test -race ./...
+	$(if $(RACEFLAG),,@echo "note: cgo unavailable, running without -race (CI runs it)")
+	go test $(RACEFLAG) ./...
 
 ## lint: formatting, vet, and golangci-lint when installed
 lint:
