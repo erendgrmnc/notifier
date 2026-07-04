@@ -8,7 +8,9 @@ rem        test/prod - reserved for future environments
 setlocal enabledelayedexpansion
 
 set "IMAGE_NAME=notifier"
-set "LOCAL_HEALTH_URL=http://localhost:8081/healthz"
+rem Single source for the local API address; override by setting API_BASE.
+if not defined API_BASE set "API_BASE=http://localhost:8081"
+set "LOCAL_HEALTH_URL=%API_BASE%/healthz"
 set "HEALTH_RETRIES=30"
 
 set "TARGET_ENV=%~1"

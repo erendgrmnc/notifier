@@ -13,7 +13,8 @@
 set -u
 
 SUITE="${1:-all}"
-API_BASE="http://localhost:8081"
+# Single source for the local API address; override with API_BASE=...
+API_BASE="${API_BASE:-http://localhost:8081}"
 POLL_SECONDS=10
 
 # --- reporting helpers ------------------------------------------------------

@@ -8,7 +8,9 @@
 set -eu
 
 IMAGE_NAME="notifier"
-LOCAL_HEALTH_URL="http://localhost:8081/healthz"
+# Single source for the local API address; override with API_BASE=...
+API_BASE="${API_BASE:-http://localhost:8081}"
+LOCAL_HEALTH_URL="${API_BASE}/healthz"
 HEALTH_RETRIES=30
 
 TARGET_ENV="${1:-local}"

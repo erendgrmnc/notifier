@@ -7,7 +7,8 @@ setlocal enabledelayedexpansion
 
 set "SUITE=%~1"
 if "%SUITE%"=="" set "SUITE=all"
-set "API_BASE=http://localhost:8081"
+rem Single source for the local API address; override by setting API_BASE.
+if not defined API_BASE set "API_BASE=http://localhost:8081"
 set "WORK_DIR=%TEMP%\notifier-tests"
 if not exist "%WORK_DIR%" mkdir "%WORK_DIR%"
 
