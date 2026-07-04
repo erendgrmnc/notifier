@@ -160,20 +160,21 @@ func (worker *Worker) processNotification(ctx context.Context, id uuid.UUID) err
 	// Throttle before the provider call. Waiting after the claim is safe:
 	// the row sits in processing and redelivery is guarded anyway.
 	if err := worker.limiters[claimed.Channel].Wait(ctx); err != nil {
-		// Shutdown while throttled: nothing was sent, so release the
-		// claim back to retrying (on a detached context) and requeue the
-		// message — the redelivered message re-claims from retrying.
+		// Nothing was sent: release the claim back to retrying (on a
+		// detached context) and requeue the message — the redelivered
+		// message re-claims from retrying. Config validation makes a
+		// non-shutdown Wait failure effectively impossible.
 		releaseCtx, cancelRelease := context.WithTimeout(context.WithoutCancel(ctx), outcomeWriteTimeout)
 		defer cancelRelease()
-		if releaseErr := worker.repo.MarkRetrying(releaseCtx, claimed.ID, "shutdown while rate limited"); releaseErr != nil {
+		if releaseErr := worker.repo.MarkRetrying(releaseCtx, claimed.ID, "delivery interrupted before send"); releaseErr != nil {
 			logger.Error("release throttled claim failed", slog.Any("error", releaseErr))
 		}
 		return fmt.Errorf("rate limit wait: %w", err)
 	}
 
-	sendStarted := time.Now()
+	sendStarted := worker.clock.Now()
 	providerMessageID, sendErr := worker.sender.Send(ctx, claimed)
-	sendDuration := time.Since(sendStarted)
+	sendDuration := worker.clock.Now().Sub(sendStarted)
 
 	// The send is irreversible; its outcome is written on a detached
 	// context so shutdown cannot lose what actually happened.

@@ -290,6 +290,23 @@ func (repo *NotificationRepository) MarkSent(ctx context.Context, id uuid.UUID, 
 	return nil
 }
 
+// collectNotifications drains a notification query's rows, wrapping
+// errors with the operation label.
+func collectNotifications(rows pgx.Rows, label string) ([]domain.Notification, error) {
+	var notifications []domain.Notification
+	for rows.Next() {
+		notification, err := scanNotification(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan %s notification: %w", label, err)
+		}
+		notifications = append(notifications, notification)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read %s notifications: %w", label, err)
+	}
+	return notifications, nil
+}
+
 func scanNotification(row pgx.Row) (domain.Notification, error) {
 	var notification domain.Notification
 	err := row.Scan(
@@ -355,19 +372,7 @@ func (repo *NotificationRepository) List(ctx context.Context, listQuery domain.L
 		return nil, fmt.Errorf("list notifications: %w", err)
 	}
 	defer rows.Close()
-
-	var notifications []domain.Notification
-	for rows.Next() {
-		notification, err := scanNotification(rows)
-		if err != nil {
-			return nil, fmt.Errorf("scan listed notification: %w", err)
-		}
-		notifications = append(notifications, notification)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list notifications: %w", err)
-	}
-	return notifications, nil
+	return collectNotifications(rows, "listed")
 }
 
 // ClaimDueForQueue atomically moves due work to queued and returns it
@@ -393,19 +398,33 @@ func (repo *NotificationRepository) ClaimDueForQueue(ctx context.Context, staleA
 		return nil, fmt.Errorf("claim due notifications: %w", err)
 	}
 	defer rows.Close()
+	return collectNotifications(rows, "due")
+}
 
-	var claimed []domain.Notification
-	for rows.Next() {
-		notification, err := scanNotification(rows)
-		if err != nil {
-			return nil, fmt.Errorf("scan due notification: %w", err)
-		}
-		claimed = append(claimed, notification)
+// RecoverStaleProcessing moves rows stuck in processing (a worker crash
+// between claim and outcome, or a lost redelivery) back to retrying so
+// they become claimable again. If the crash happened after a successful
+// provider send but before MarkSent, this re-attempts an already-sent
+// message — the documented at-least-once trade-off.
+func (repo *NotificationRepository) RecoverStaleProcessing(ctx context.Context, staleAfter time.Duration, limit int) ([]domain.Notification, error) {
+	recover := `
+		UPDATE notifications
+		SET status = 'retrying', last_error = 'recovered from stale processing', updated_at = now()
+		WHERE id IN (
+			SELECT id FROM notifications
+			WHERE status = 'processing' AND updated_at < now() - make_interval(secs => $1)
+			ORDER BY updated_at
+			LIMIT $2
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING ` + notificationColumns
+
+	rows, err := repo.pool.Query(ctx, recover, staleAfter.Seconds(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("recover stale processing: %w", err)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("claim due notifications: %w", err)
-	}
-	return claimed, nil
+	defer rows.Close()
+	return collectNotifications(rows, "stale processing")
 }
 
 // ListStaleQueued returns queued rows untouched for staleAfter — their
@@ -423,19 +442,7 @@ func (repo *NotificationRepository) ListStaleQueued(ctx context.Context, staleAf
 		return nil, fmt.Errorf("list stale queued notifications: %w", err)
 	}
 	defer rows.Close()
-
-	var stale []domain.Notification
-	for rows.Next() {
-		notification, err := scanNotification(rows)
-		if err != nil {
-			return nil, fmt.Errorf("scan stale queued notification: %w", err)
-		}
-		stale = append(stale, notification)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list stale queued notifications: %w", err)
-	}
-	return stale, nil
+	return collectNotifications(rows, "stale queued")
 }
 
 // TouchQueued refreshes a queued row's updated_at after a republish so

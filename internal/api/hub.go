@@ -39,7 +39,11 @@ type Hub struct {
 	register   chan *wsClient
 	unregister chan *wsClient
 	broadcast  chan hubEvent
-	logger     *slog.Logger
+	// done closes when Run exits so handlers never block sending to a
+	// hub that no longer receives (shutdown races the hijacked conns,
+	// which http.Server.Shutdown does not drain).
+	done   chan struct{}
+	logger *slog.Logger
 }
 
 func NewHub(logger *slog.Logger) *Hub {
@@ -47,6 +51,7 @@ func NewHub(logger *slog.Logger) *Hub {
 		register:   make(chan *wsClient),
 		unregister: make(chan *wsClient),
 		broadcast:  make(chan hubEvent, 64),
+		done:       make(chan struct{}),
 		logger:     logger,
 	}
 }
@@ -55,6 +60,7 @@ func NewHub(logger *slog.Logger) *Hub {
 // the map; only it closes client send channels.
 func (hub *Hub) Run(ctx context.Context) {
 	clients := make(map[*wsClient]struct{})
+	defer close(hub.done)
 
 	for {
 		select {
@@ -115,8 +121,18 @@ func (hub *Hub) serveWS(writer http.ResponseWriter, request *http.Request) {
 		client.filterID = filterID
 	}
 
-	hub.register <- client
-	defer func() { hub.unregister <- client }()
+	select {
+	case hub.register <- client:
+	case <-hub.done:
+		conn.Close(websocket.StatusGoingAway, "server shutting down")
+		return
+	}
+	defer func() {
+		select {
+		case hub.unregister <- client:
+		case <-hub.done:
+		}
+	}()
 
 	// Reader: discard inbound frames, detect disconnect.
 	readerDone := make(chan struct{})

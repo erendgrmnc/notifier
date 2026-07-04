@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -129,14 +130,24 @@ func (worker *Worker) consumeUntilPaused(ctx context.Context, conn *amqp.Connect
 
 	// Handler pool: exits when the broker closes the deliveries channel
 	// (after Cancel drains it, or on broker failure). In-flight handlers
-	// finish their current message before returning. poolDone lets the
-	// supervisor notice a broker-side closure it did not request.
+	// finish their current message before returning. Once draining is
+	// set (pause/shutdown requested), buffered deliveries are requeued
+	// instead of processed — basic.cancel does not return messages the
+	// broker already pushed to us. poolDone lets the supervisor notice a
+	// broker-side closure it did not request.
+	var draining atomic.Bool
 	var handlerGroup sync.WaitGroup
 	for i := 0; i < worker.concurrency; i++ {
 		handlerGroup.Add(1)
 		go func() {
 			defer handlerGroup.Done()
 			for delivery := range deliveries {
+				if draining.Load() {
+					if err := delivery.Nack(false, true); err != nil {
+						logger.Error("drain nack failed", slog.Any("error", err))
+					}
+					continue
+				}
 				worker.handleDelivery(ctx, logger, delivery)
 			}
 		}()
@@ -158,9 +169,11 @@ func (worker *Worker) consumeUntilPaused(ctx context.Context, conn *amqp.Connect
 			return
 		}
 		cancelRequested = true
+		draining.Store(true)
 		logger.Info("cancelling subscription", slog.String("reason", reason))
-		// Cancel returns prefetched-but-unacked messages to the queue and
-		// closes the deliveries channel once in-flight ones are handed out.
+		// Cancel stops new pushes and closes the deliveries channel once
+		// the already-pushed backlog is handed out; the draining flag
+		// makes handlers requeue that backlog instead of delivering it.
 		if err := amqpChannel.Cancel(consumerTag, false); err != nil {
 			logger.Error("cancel consumer failed", slog.Any("error", err))
 		}

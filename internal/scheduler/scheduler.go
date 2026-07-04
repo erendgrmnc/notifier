@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"notifier/internal/domain"
+	"notifier/internal/queue/rabbit"
 )
 
 // claimBatchLimit bounds the rows claimed per tick so one giant backlog
@@ -21,27 +22,37 @@ const claimBatchLimit = 100
 type Repository interface {
 	ClaimDueForQueue(ctx context.Context, staleAfter time.Duration, limit int) ([]domain.Notification, error)
 	ListStaleQueued(ctx context.Context, staleAfter time.Duration, limit int) ([]domain.Notification, error)
+	RecoverStaleProcessing(ctx context.Context, staleAfter time.Duration, limit int) ([]domain.Notification, error)
 	TouchQueued(ctx context.Context, id uuid.UUID) error
 }
 
-// Publisher hands claimed notifications to the queue.
+// Publisher hands claimed notifications to the queue and fans out
+// status events.
 type Publisher interface {
 	PublishCreated(ctx context.Context, notification domain.Notification) error
+	PublishEvent(ctx context.Context, event rabbit.StatusEvent) error
+}
+
+// Clock supplies time so event timestamps are testable.
+type Clock interface {
+	Now() time.Time
 }
 
 // Scheduler polls for due and stranded work.
 type Scheduler struct {
 	repo         Repository
 	publisher    Publisher
+	clock        Clock
 	logger       *slog.Logger
 	pollInterval time.Duration
 	staleAfter   time.Duration
 }
 
-func New(repo Repository, publisher Publisher, logger *slog.Logger, pollInterval, staleAfter time.Duration) *Scheduler {
+func New(repo Repository, publisher Publisher, clock Clock, logger *slog.Logger, pollInterval, staleAfter time.Duration) *Scheduler {
 	return &Scheduler{
 		repo:         repo,
 		publisher:    publisher,
+		clock:        clock,
 		logger:       logger,
 		pollInterval: pollInterval,
 		staleAfter:   staleAfter,
@@ -68,11 +79,38 @@ func (scheduler *Scheduler) Run(ctx context.Context) {
 	}
 }
 
-// RunOnce performs one poll: queue due/stuck rows, then republish stale
-// queued ones. Errors are logged, never fatal — the next tick retries.
+// RunOnce performs one poll: queue due/stuck rows, republish stale
+// queued ones, and recover rows stranded in processing by a crashed
+// worker. Errors are logged, never fatal — the next tick retries.
 func (scheduler *Scheduler) RunOnce(ctx context.Context) {
 	scheduler.queueDue(ctx)
 	scheduler.republishStale(ctx)
+	scheduler.recoverStaleProcessing(ctx)
+}
+
+// recoverStaleProcessing moves crash-stranded processing rows back to
+// retrying and republishes them. May re-attempt an already-sent message
+// when the crash landed between provider accept and the sent mark — the
+// documented at-least-once trade-off.
+func (scheduler *Scheduler) recoverStaleProcessing(ctx context.Context) {
+	recovered, err := scheduler.repo.RecoverStaleProcessing(ctx, scheduler.staleAfter, claimBatchLimit)
+	if err != nil {
+		scheduler.logger.Error("recover stale processing failed", slog.Any("error", err))
+		return
+	}
+
+	for _, notification := range recovered {
+		scheduler.logger.Warn("recovered notification stuck in processing",
+			slog.String("notification_id", notification.ID.String()),
+			slog.Int("attempts", notification.Attempts),
+		)
+		if err := scheduler.publisher.PublishCreated(ctx, notification); err != nil {
+			scheduler.logger.Warn("republish recovered notification failed",
+				slog.String("notification_id", notification.ID.String()),
+				slog.Any("error", err),
+			)
+		}
+	}
 }
 
 func (scheduler *Scheduler) queueDue(ctx context.Context) {
@@ -97,6 +135,16 @@ func (scheduler *Scheduler) queueDue(ctx context.Context) {
 			continue
 		}
 		published++
+		// Live listeners see the scheduled→queued transition too.
+		if err := scheduler.publisher.PublishEvent(ctx, rabbit.StatusEvent{
+			NotificationID: notification.ID,
+			Status:         string(domain.StatusQueued),
+			Channel:        string(notification.Channel),
+			Attempts:       notification.Attempts,
+			OccurredAt:     scheduler.clock.Now(),
+		}); err != nil {
+			scheduler.logger.Warn("queued event publish failed", slog.Any("error", err))
+		}
 	}
 	scheduler.logger.Info("queued due notifications",
 		slog.Int("claimed", len(claimed)), slog.Int("published", published))

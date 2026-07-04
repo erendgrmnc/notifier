@@ -256,6 +256,10 @@ func (handler *notificationHandler) writeServiceError(writer http.ResponseWriter
 		writeErrorResponse(writer, http.StatusBadRequest, "validation failed", validationErrs)
 	case errors.Is(err, domain.ErrNotFound):
 		writeErrorResponse(writer, http.StatusNotFound, "notification not found", nil)
+	case errors.Is(err, domain.ErrDuplicateIdempotencyKey):
+		// Concurrent create raced the idempotency pre-check; the client
+		// should retry and will receive the per-item duplicate/replay.
+		writeErrorResponse(writer, http.StatusConflict, "idempotency key conflict; retry the request", nil)
 	default:
 		observability.LoggerFrom(request.Context(), handler.logger).Error("request failed",
 			slog.String("path", request.URL.Path), slog.Any("error", err))

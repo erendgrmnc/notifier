@@ -145,6 +145,15 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 
+	// Zero or negative here would make the limiter reject every wait
+	// (hot redelivery loop) or start zero handlers.
+	if cfg.RateLimitPerChannel < 1 {
+		return Config{}, fmt.Errorf("parse RATE_LIMIT_PER_CHANNEL: must be at least 1, got %d", cfg.RateLimitPerChannel)
+	}
+	if cfg.WorkerConcurrency < 1 {
+		return Config{}, fmt.Errorf("parse WORKER_CONCURRENCY: must be at least 1, got %d", cfg.WorkerConcurrency)
+	}
+
 	return cfg, nil
 }
 

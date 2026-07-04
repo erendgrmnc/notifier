@@ -11,14 +11,16 @@ import (
 	"github.com/google/uuid"
 
 	"notifier/internal/domain"
+	"notifier/internal/queue/rabbit"
 )
 
 type fakeRepository struct {
-	due        []domain.Notification
-	stale      []domain.Notification
-	claimErr   error
-	touched    []uuid.UUID
-	claimCalls int
+	due             []domain.Notification
+	stale           []domain.Notification
+	stuckProcessing []domain.Notification
+	claimErr        error
+	touched         []uuid.UUID
+	claimCalls      int
 }
 
 func (repo *fakeRepository) ClaimDueForQueue(_ context.Context, _ time.Duration, _ int) ([]domain.Notification, error) {
@@ -42,8 +44,15 @@ func (repo *fakeRepository) TouchQueued(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
+func (repo *fakeRepository) RecoverStaleProcessing(_ context.Context, _ time.Duration, _ int) ([]domain.Notification, error) {
+	recovered := repo.stuckProcessing
+	repo.stuckProcessing = nil
+	return recovered, nil
+}
+
 type fakePublisher struct {
 	published []uuid.UUID
+	events    []rabbit.StatusEvent
 	failFor   map[uuid.UUID]error
 }
 
@@ -55,9 +64,18 @@ func (publisher *fakePublisher) PublishCreated(_ context.Context, notification d
 	return nil
 }
 
+func (publisher *fakePublisher) PublishEvent(_ context.Context, event rabbit.StatusEvent) error {
+	publisher.events = append(publisher.events, event)
+	return nil
+}
+
+type fixedClock struct{}
+
+func (fixedClock) Now() time.Time { return time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC) }
+
 func newTestScheduler(repo *fakeRepository, publisher *fakePublisher) *Scheduler {
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
-	return New(repo, publisher, logger, time.Second, time.Minute)
+	return New(repo, publisher, fixedClock{}, logger, time.Second, time.Minute)
 }
 
 func dueNotification(status domain.Status) domain.Notification {
@@ -135,5 +153,29 @@ func TestRunStopsOnContextCancel(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not stop on context cancel")
+	}
+}
+
+func TestRunOnceRecoversStaleProcessing(t *testing.T) {
+	stuck := dueNotification(domain.StatusRetrying) // status post-recovery
+	repo := &fakeRepository{stuckProcessing: []domain.Notification{stuck}}
+	publisher := &fakePublisher{}
+
+	newTestScheduler(repo, publisher).RunOnce(context.Background())
+
+	if len(publisher.published) != 1 || publisher.published[0] != stuck.ID {
+		t.Errorf("published %v, want recovered row republished", publisher.published)
+	}
+}
+
+func TestQueueDueEmitsQueuedEvents(t *testing.T) {
+	due := dueNotification(domain.StatusQueued)
+	repo := &fakeRepository{due: []domain.Notification{due}}
+	publisher := &fakePublisher{}
+
+	newTestScheduler(repo, publisher).RunOnce(context.Background())
+
+	if len(publisher.events) != 1 || publisher.events[0].Status != "queued" {
+		t.Errorf("events = %+v, want one queued event", publisher.events)
 	}
 }

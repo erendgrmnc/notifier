@@ -204,7 +204,7 @@ func run() error {
 
 		// The scheduler runs with the api role: it fires scheduled
 		// notifications and recovers rows whose publish was lost.
-		dueScheduler := scheduler.New(repository, publisher, logger, cfg.SchedulerPollInterval, cfg.StalePendingAfter)
+		dueScheduler := scheduler.New(repository, publisher, realClock{}, logger, cfg.SchedulerPollInterval, cfg.StalePendingAfter)
 		componentGroup.Add(1)
 		go func() {
 			defer componentGroup.Done()

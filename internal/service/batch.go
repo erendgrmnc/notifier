@@ -106,11 +106,17 @@ func (svc *NotificationService) CreateBatch(ctx context.Context, inputs []Create
 		if input.IdempotencyKey != nil {
 			if existingID, duplicate := existingKeys[*input.IdempotencyKey]; duplicate {
 				itemResult.Status = BatchItemDuplicate
-				itemResult.ExistingID = &existingID
+				if existingID != uuid.Nil {
+					itemResult.ExistingID = &existingID
+				}
 				result.Results[index] = itemResult
 				result.Rejected++
 				continue
 			}
+			// Track keys within this request too: two items sharing a new
+			// key would otherwise both enter the COPY and fail the whole
+			// batch with a unique violation.
+			existingKeys[*input.IdempotencyKey] = notification.ID
 		}
 
 		if err := domain.ValidateNew(notification, now); err != nil {
