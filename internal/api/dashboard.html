@@ -50,8 +50,10 @@
   /* ---- layout ---- */
   .layout { display: grid; grid-template-columns: 330px minmax(430px, 1fr) 330px; gap: 14px; align-items: start; }
   @media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } }
+  /* min-width:0 lets grid/flex children truncate instead of widening the page */
+  .layout > *, .stack > * { min-width: 0; }
   .stack { display: grid; gap: 14px; }
-  .panel { background: var(--panel); border: 1px solid var(--edge); border-radius: 10px; padding: 14px; }
+  .panel { background: var(--panel); border: 1px solid var(--edge); border-radius: 10px; padding: 14px; min-width: 0; }
   .panel > h2 {
     font: 600 10.5px var(--mono); letter-spacing: .18em; text-transform: uppercase;
     color: var(--dim); margin-bottom: 12px;
@@ -150,11 +152,12 @@
   .wire-panel > h2 button:hover { color: var(--paper); border-color: var(--dim); }
   .wire-panel > h2::after { content: none; }
   .wire-panel > h2 .rule { flex: 1; height: 1px; background: var(--edge); }
-  #wire { font: 11.5px var(--mono); max-height: 180px; overflow-y: auto; }
+  #wire { font: 11.5px var(--mono); max-height: 180px; overflow-y: auto; overflow-x: hidden; }
   .wire-line { display: flex; gap: 10px; align-items: baseline; padding: 2.5px 0;
-    border-bottom: 1px solid rgba(38,50,82,.35); }
+    border-bottom: 1px solid rgba(38,50,82,.35); min-width: 0; }
   .wire-line .t { color: var(--dim); font-size: 10px; flex: 0 0 62px; }
   .wire-line .m { flex: 0 0 44px; font-weight: 700; }
+  .wire-line .p { flex-shrink: 0; }
   .wire-line .m.get { color: var(--dim); }
   .wire-line .m.post { color: var(--signal); }
   .wire-line .m.put { color: var(--info); }
@@ -163,7 +166,7 @@
   .wire-line .c.ok { color: var(--ok); }
   .wire-line .c.warn { color: var(--signal); }
   .wire-line .c.bad { color: var(--fail); }
-  .wire-line .body { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .wire-line .body { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
   .wire-line .x { color: var(--dim); font-size: 10px; }
   .wire-divider { color: var(--signal); font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase;
     padding: 6px 0 3px; }
