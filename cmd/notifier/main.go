@@ -31,6 +31,16 @@ type realClock struct{}
 
 func (realClock) Now() time.Time { return time.Now() }
 
+// newSender selects the delivery provider: the real webhook sender when
+// PROVIDER_URL is configured, otherwise the logging simulator.
+func newSender(cfg config.Config, logger *slog.Logger) worker.Sender {
+	if cfg.ProviderURL == "" {
+		logger.Warn("PROVIDER_URL not set; deliveries are simulated")
+		return delivery.NewLogSender(logger)
+	}
+	return delivery.NewWebhookSender(cfg.ProviderURL, cfg.ProviderTimeout)
+}
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -80,6 +90,12 @@ func run() error {
 
 	repository := postgres.NewNotificationRepository(pool)
 
+	publisher, err := rabbit.NewPublisher(rabbitConn)
+	if err != nil {
+		return fmt.Errorf("create publisher: %w", err)
+	}
+	defer publisher.Close()
+
 	runsAPI := cfg.Role == config.RoleAPI || cfg.Role == config.RoleAll
 	runsWorker := cfg.Role == config.RoleWorker || cfg.Role == config.RoleAll
 
@@ -88,12 +104,6 @@ func run() error {
 
 	var httpServer *http.Server
 	if runsAPI {
-		publisher, err := rabbit.NewPublisher(rabbitConn)
-		if err != nil {
-			return fmt.Errorf("create publisher: %w", err)
-		}
-		defer publisher.Close()
-
 		notifications := service.NewNotificationService(repository, publisher, realClock{}, logger)
 		router := api.NewRouter(api.RouterConfig{
 			Logger:         logger,
@@ -113,7 +123,7 @@ func run() error {
 	}
 
 	if runsWorker {
-		queueWorker := worker.New(repository, delivery.NewLogSender(logger), realClock{}, logger)
+		queueWorker := worker.New(repository, newSender(cfg, logger), publisher, realClock{}, logger, cfg.MaxDeliveryAttempts)
 
 		componentGroup.Add(1)
 		go func() {

@@ -61,6 +61,8 @@ services:
       ROLE: worker
       DATABASE_URL: postgres://notifier:notifier@postgres:5432/notifier?sslmode=disable
       RABBITMQ_URL: amqp://notifier:notifier@rabbitmq:5672/
+      # Set to your webhook.site URL; empty simulates deliveries in logs.
+      PROVIDER_URL: ${PROVIDER_URL:-}
     depends_on:
       postgres:
         condition: service_healthy
