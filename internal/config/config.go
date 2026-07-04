@@ -26,6 +26,10 @@ const (
 	defaultProviderTimeout = 10 * time.Second
 	// defaultMaxDeliveryAttempts = first attempt + one per retry tier.
 	defaultMaxDeliveryAttempts = 4
+	// defaultRateLimitPerChannel is the assessment's 100 msg/s ceiling.
+	defaultRateLimitPerChannel = 100
+	// defaultWorkerConcurrency is handler goroutines per channel queue.
+	defaultWorkerConcurrency = 10
 )
 
 // Config holds every runtime tunable. Values come from environment
@@ -46,6 +50,12 @@ type Config struct {
 	// DashboardEnabled mounts the testing dashboard, worker controls,
 	// queue inspection, and the built-in mock provider.
 	DashboardEnabled bool
+	// RateLimitPerChannel caps deliveries per second per channel. With N
+	// worker replicas the effective limit is N× this value; set to
+	// limit/N when scaling out.
+	RateLimitPerChannel int
+	// WorkerConcurrency is concurrent delivery handlers per channel.
+	WorkerConcurrency int
 }
 
 // LookupFunc returns the value of an environment variable, or "" if unset.
@@ -65,6 +75,8 @@ func Load(lookup LookupFunc) (Config, error) {
 		WorkerPrefetch:      defaultWorkerPrefetch,
 		ProviderTimeout:     defaultProviderTimeout,
 		MaxDeliveryAttempts: defaultMaxDeliveryAttempts,
+		RateLimitPerChannel: defaultRateLimitPerChannel,
+		WorkerConcurrency:   defaultWorkerConcurrency,
 	}
 
 	if roleValue := lookup("ROLE"); roleValue != "" {
@@ -103,6 +115,12 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 	if err := parseBool(lookup, "DASHBOARD_ENABLED", &cfg.DashboardEnabled); err != nil {
+		return Config{}, err
+	}
+	if err := parseInt(lookup, "RATE_LIMIT_PER_CHANNEL", &cfg.RateLimitPerChannel); err != nil {
+		return Config{}, err
+	}
+	if err := parseInt(lookup, "WORKER_CONCURRENCY", &cfg.WorkerConcurrency); err != nil {
 		return Config{}, err
 	}
 
