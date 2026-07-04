@@ -24,9 +24,11 @@ const maxRequestBodyBytes = 1 << 20 // 1 MiB
 
 // NotificationService is what the handlers need from the service layer.
 type NotificationService interface {
-	Create(ctx context.Context, input service.CreateInput) (domain.Notification, error)
+	Create(ctx context.Context, input service.CreateInput) (service.CreateResult, error)
+	CreateBatch(ctx context.Context, inputs []service.CreateInput) (service.BatchResult, error)
 	Get(ctx context.Context, id uuid.UUID) (domain.Notification, error)
-	ListRecent(ctx context.Context, limit int) ([]domain.Notification, error)
+	Cancel(ctx context.Context, id uuid.UUID) (domain.Notification, error)
+	List(ctx context.Context, query domain.ListQuery) ([]domain.Notification, error)
 }
 
 type notificationHandler struct {
@@ -94,7 +96,7 @@ func (handler *notificationHandler) create(writer http.ResponseWriter, request *
 		return
 	}
 
-	created, err := handler.notifications.Create(request.Context(), service.CreateInput{
+	result, err := handler.notifications.Create(request.Context(), service.CreateInput{
 		Recipient:      payload.Recipient,
 		Channel:        domain.Channel(payload.Channel),
 		Content:        payload.Content,
@@ -107,23 +109,24 @@ func (handler *notificationHandler) create(writer http.ResponseWriter, request *
 		return
 	}
 
-	writeJSONResponse(writer, http.StatusCreated, toNotificationResponse(created))
+	// An idempotent replay returns the original resource with 200: the
+	// client's retry succeeded without creating anything new.
+	status := http.StatusCreated
+	if result.Replayed {
+		status = http.StatusOK
+	}
+	writeJSONResponse(writer, status, toNotificationResponse(result.Notification))
 }
 
-// list returns recent notifications wrapped in {data} so the filtered,
-// cursor-paginated version extends the same shape.
+// list returns filtered notifications newest-first as {data, next_cursor}.
 func (handler *notificationHandler) list(writer http.ResponseWriter, request *http.Request) {
-	limit := 0
-	if limitParam := request.URL.Query().Get("limit"); limitParam != "" {
-		parsed, err := strconv.Atoi(limitParam)
-		if err != nil || parsed < 1 {
-			writeErrorResponse(writer, http.StatusBadRequest, "limit must be a positive integer", nil)
-			return
-		}
-		limit = parsed
+	listQuery, err := parseListQuery(request)
+	if err != nil {
+		writeErrorResponse(writer, http.StatusBadRequest, err.Error(), nil)
+		return
 	}
 
-	notifications, err := handler.notifications.ListRecent(request.Context(), limit)
+	notifications, err := handler.notifications.List(request.Context(), listQuery)
 	if err != nil {
 		handler.writeServiceError(writer, request, err)
 		return
@@ -133,7 +136,86 @@ func (handler *notificationHandler) list(writer http.ResponseWriter, request *ht
 	for i, notification := range notifications {
 		responses[i] = toNotificationResponse(notification)
 	}
-	writeJSONResponse(writer, http.StatusOK, map[string]any{"data": responses})
+
+	// A full page implies more may follow; the cursor resumes after the
+	// last returned row. Limit here mirrors the service clamp.
+	effectiveLimit := listQuery.Limit
+	if effectiveLimit <= 0 {
+		effectiveLimit = service.DefaultListLimit
+	}
+	if effectiveLimit > service.MaxListLimit {
+		effectiveLimit = service.MaxListLimit
+	}
+	nextCursor := ""
+	if len(notifications) == effectiveLimit {
+		last := notifications[len(notifications)-1]
+		nextCursor = encodeCursor(last.CreatedAt, last.ID)
+	}
+
+	writeJSONResponse(writer, http.StatusOK, map[string]any{"data": responses, "next_cursor": nextCursor})
+}
+
+// parseListQuery translates query parameters into a domain list query.
+func parseListQuery(request *http.Request) (domain.ListQuery, error) {
+	params := request.URL.Query()
+	listQuery := domain.ListQuery{
+		Status:  domain.Status(params.Get("status")),
+		Channel: domain.Channel(params.Get("channel")),
+	}
+
+	if limitParam := params.Get("limit"); limitParam != "" {
+		parsed, err := strconv.Atoi(limitParam)
+		if err != nil || parsed < 1 {
+			return domain.ListQuery{}, fmt.Errorf("limit must be a positive integer")
+		}
+		listQuery.Limit = parsed
+	}
+	if batchParam := params.Get("batch_id"); batchParam != "" {
+		batchID, err := uuid.Parse(batchParam)
+		if err != nil {
+			return domain.ListQuery{}, fmt.Errorf("batch_id must be a UUID")
+		}
+		listQuery.BatchID = &batchID
+	}
+	for name, target := range map[string]**time.Time{"from": &listQuery.From, "to": &listQuery.To} {
+		if timeParam := params.Get(name); timeParam != "" {
+			parsed, err := time.Parse(time.RFC3339, timeParam)
+			if err != nil {
+				return domain.ListQuery{}, fmt.Errorf("%s must be RFC3339", name)
+			}
+			*target = &parsed
+		}
+	}
+	if cursorParam := params.Get("cursor"); cursorParam != "" {
+		cursor, err := decodeCursor(cursorParam)
+		if err != nil {
+			return domain.ListQuery{}, fmt.Errorf("invalid cursor")
+		}
+		listQuery.CursorCreatedAt = &cursor.CreatedAt
+		listQuery.CursorID = &cursor.ID
+	}
+	return listQuery, nil
+}
+
+// cancel stops a pending/scheduled/queued notification.
+func (handler *notificationHandler) cancel(writer http.ResponseWriter, request *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(request, "id"))
+	if err != nil {
+		writeErrorResponse(writer, http.StatusBadRequest, "id must be a UUID", nil)
+		return
+	}
+
+	cancelled, err := handler.notifications.Cancel(request.Context(), id)
+	if err != nil {
+		if errors.Is(err, domain.ErrInvalidTransition) {
+			writeErrorResponse(writer, http.StatusConflict, "notification is no longer cancellable", nil)
+			return
+		}
+		handler.writeServiceError(writer, request, err)
+		return
+	}
+
+	writeJSONResponse(writer, http.StatusOK, toNotificationResponse(cancelled))
 }
 
 func (handler *notificationHandler) get(writer http.ResponseWriter, request *http.Request) {

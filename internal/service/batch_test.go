@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -43,7 +45,8 @@ func TestCreateBatchPartialSuccess(t *testing.T) {
 	repo := newFakeRepository()
 	batchRepo := &fakeBatchRepository{fakeRepository: repo}
 	publisher := &fakePublisher{}
-	svc := newTestServiceWithPublisher(repo, publisher)
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	svc := NewNotificationService(repo, batchRepo, publisher, fixedClock{now: testNow}, logger)
 
 	duplicateKey := "seen-before"
 	repo.stored[uuid.New()] = domain.Notification{
@@ -57,7 +60,7 @@ func TestCreateBatchPartialSuccess(t *testing.T) {
 		validBatchInput("ok two"),
 	}
 
-	result, err := svc.CreateBatch(context.Background(), batchRepo, inputs)
+	result, err := svc.CreateBatch(context.Background(), inputs)
 	if err != nil {
 		t.Fatalf("CreateBatch: %v", err)
 	}
@@ -97,13 +100,14 @@ func TestCreateBatchScheduledItemsNotPublished(t *testing.T) {
 	repo := newFakeRepository()
 	batchRepo := &fakeBatchRepository{fakeRepository: repo}
 	publisher := &fakePublisher{}
-	svc := newTestServiceWithPublisher(repo, publisher)
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	svc := NewNotificationService(repo, batchRepo, publisher, fixedClock{now: testNow}, logger)
 
 	future := testNow.Add(time.Hour)
 	scheduled := validBatchInput("later")
 	scheduled.ScheduledAt = &future
 
-	result, err := svc.CreateBatch(context.Background(), batchRepo, []CreateInput{scheduled})
+	result, err := svc.CreateBatch(context.Background(), []CreateInput{scheduled})
 	if err != nil {
 		t.Fatalf("CreateBatch: %v", err)
 	}

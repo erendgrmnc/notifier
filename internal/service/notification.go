@@ -45,13 +45,14 @@ type Clock interface {
 // NotificationService implements the create/query use cases.
 type NotificationService struct {
 	repo      Repository
+	batchRepo BatchRepository
 	publisher Publisher
 	clock     Clock
 	logger    *slog.Logger
 }
 
-func NewNotificationService(repo Repository, publisher Publisher, clock Clock, logger *slog.Logger) *NotificationService {
-	return &NotificationService{repo: repo, publisher: publisher, clock: clock, logger: logger}
+func NewNotificationService(repo Repository, batchRepo BatchRepository, publisher Publisher, clock Clock, logger *slog.Logger) *NotificationService {
+	return &NotificationService{repo: repo, batchRepo: batchRepo, publisher: publisher, clock: clock, logger: logger}
 }
 
 // CreateInput carries the validated-shape request for one notification.

@@ -22,16 +22,17 @@ type fakeNotificationService struct {
 	createErr     error
 	lastCreate    service.CreateInput
 	lastListLimit int
+	replayNext    bool
 }
 
 func newFakeNotificationService() *fakeNotificationService {
 	return &fakeNotificationService{stored: map[uuid.UUID]domain.Notification{}}
 }
 
-func (fake *fakeNotificationService) Create(_ context.Context, input service.CreateInput) (domain.Notification, error) {
+func (fake *fakeNotificationService) Create(_ context.Context, input service.CreateInput) (service.CreateResult, error) {
 	fake.lastCreate = input
 	if fake.createErr != nil {
-		return domain.Notification{}, fake.createErr
+		return service.CreateResult{}, fake.createErr
 	}
 	notification := domain.Notification{
 		ID:        uuid.New(),
@@ -44,6 +45,36 @@ func (fake *fakeNotificationService) Create(_ context.Context, input service.Cre
 		UpdatedAt: time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC),
 	}
 	fake.stored[notification.ID] = notification
+	return service.CreateResult{Notification: notification, Replayed: fake.replayNext}, nil
+}
+
+func (fake *fakeNotificationService) CreateBatch(_ context.Context, inputs []service.CreateInput) (service.BatchResult, error) {
+	result := service.BatchResult{BatchID: uuid.New(), Results: make([]service.BatchItemResult, len(inputs))}
+	for i := range inputs {
+		created, err := fake.Create(context.Background(), inputs[i])
+		if err != nil {
+			return service.BatchResult{}, err
+		}
+		result.Results[i] = service.BatchItemResult{
+			Index:        i,
+			Status:       service.BatchItemAccepted,
+			Notification: &created.Notification,
+		}
+		result.Accepted++
+	}
+	return result, nil
+}
+
+func (fake *fakeNotificationService) Cancel(_ context.Context, id uuid.UUID) (domain.Notification, error) {
+	notification, ok := fake.stored[id]
+	if !ok {
+		return domain.Notification{}, domain.ErrNotFound
+	}
+	if !domain.CanTransition(notification.Status, domain.StatusCancelled) {
+		return domain.Notification{}, domain.ErrInvalidTransition
+	}
+	notification.Status = domain.StatusCancelled
+	fake.stored[id] = notification
 	return notification, nil
 }
 
@@ -55,8 +86,8 @@ func (fake *fakeNotificationService) Get(_ context.Context, id uuid.UUID) (domai
 	return notification, nil
 }
 
-func (fake *fakeNotificationService) ListRecent(_ context.Context, limit int) ([]domain.Notification, error) {
-	fake.lastListLimit = limit
+func (fake *fakeNotificationService) List(_ context.Context, query domain.ListQuery) ([]domain.Notification, error) {
+	fake.lastListLimit = query.Limit
 	var notifications []domain.Notification
 	for _, notification := range fake.stored {
 		notifications = append(notifications, notification)
@@ -156,7 +187,7 @@ func TestGetNotificationReturnsResource(t *testing.T) {
 	}
 
 	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/notifications/"+created.ID.String(), nil))
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/notifications/"+created.Notification.ID.String(), nil))
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", recorder.Code, recorder.Body.String())
@@ -165,8 +196,8 @@ func TestGetNotificationReturnsResource(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if response["id"] != created.ID.String() {
-		t.Errorf("response id = %v, want %s", response["id"], created.ID)
+	if response["id"] != created.Notification.ID.String() {
+		t.Errorf("response id = %v, want %s", response["id"], created.Notification.ID)
 	}
 }
 

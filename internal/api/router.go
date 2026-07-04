@@ -49,8 +49,10 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 	router.Route("/api/v1", func(v1 chi.Router) {
 		v1.Get("/openapi.yaml", handleOpenAPISpec)
 		v1.Post("/notifications", notifications.create)
+		v1.Post("/notifications/batch", notifications.createBatch)
 		v1.Get("/notifications", notifications.list)
 		v1.Get("/notifications/{id}", notifications.get)
+		v1.Post("/notifications/{id}/cancel", notifications.cancel)
 
 		if cfg.DashboardEnabled {
 			v1.Get("/queues", dashboard.getQueueDepths)

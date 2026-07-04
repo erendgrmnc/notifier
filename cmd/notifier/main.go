@@ -105,7 +105,7 @@ func run() error {
 
 	var httpServer *http.Server
 	if runsAPI {
-		notifications := service.NewNotificationService(repository, publisher, realClock{}, logger)
+		notifications := service.NewNotificationService(repository, repository, publisher, realClock{}, logger)
 		router := api.NewRouter(api.RouterConfig{
 			Logger:           logger,
 			RequestTimeout:   requestTimeout,
