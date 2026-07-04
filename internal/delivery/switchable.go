@@ -15,7 +15,7 @@ const overrideCacheTTL = 2 * time.Second
 // Sender matches the worker's consumer-side interface so senders can
 // wrap each other.
 type Sender interface {
-	Send(ctx context.Context, notification domain.Notification) (string, error)
+	Send(ctx context.Context, notification domain.Notification) (Result, error)
 }
 
 // OverrideLookup reads the shared runtime provider override.
@@ -42,7 +42,7 @@ func NewSwitchableSender(lookup OverrideLookup, fallback Sender, timeout time.Du
 	return &SwitchableSender{lookup: lookup, fallback: fallback, timeout: timeout}
 }
 
-func (sender *SwitchableSender) Send(ctx context.Context, notification domain.Notification) (string, error) {
+func (sender *SwitchableSender) Send(ctx context.Context, notification domain.Notification) (Result, error) {
 	target := sender.currentTarget(ctx)
 	if target == nil {
 		return sender.fallback.Send(ctx, notification)

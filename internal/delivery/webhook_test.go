@@ -36,13 +36,16 @@ func TestWebhookSenderSuccess(t *testing.T) {
 	defer server.Close()
 
 	sender := NewWebhookSender(server.URL, time.Second)
-	providerMessageID, err := sender.Send(context.Background(), testNotification())
+	sendResult, err := sender.Send(context.Background(), testNotification())
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 
-	if providerMessageID != "provider-123" {
-		t.Errorf("providerMessageID = %q, want provider-123", providerMessageID)
+	if sendResult.ProviderMessageID != "provider-123" {
+		t.Errorf("ProviderMessageID = %q, want provider-123", sendResult.ProviderMessageID)
+	}
+	if sendResult.Body == "" || sendResult.StatusCode == 0 {
+		t.Errorf("Result = %+v, want captured status and body snapshot", sendResult)
 	}
 	if received["to"] != "+905551234567" || received["channel"] != "sms" || received["content"] != "hello" {
 		t.Errorf("provider received %v, want to/channel/content fields", received)
@@ -110,12 +113,12 @@ func TestWebhookSenderAcceptsMissingMessageID(t *testing.T) {
 	defer server.Close()
 
 	sender := NewWebhookSender(server.URL, time.Second)
-	providerMessageID, err := sender.Send(context.Background(), testNotification())
+	sendResult, err := sender.Send(context.Background(), testNotification())
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	if providerMessageID != "" {
-		t.Errorf("providerMessageID = %q, want empty for bodyless 2xx", providerMessageID)
+	if sendResult.ProviderMessageID != "" {
+		t.Errorf("ProviderMessageID = %q, want empty for bodyless 2xx", sendResult.ProviderMessageID)
 	}
 }
 

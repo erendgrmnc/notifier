@@ -4,6 +4,7 @@ package delivery
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/google/uuid"
@@ -21,7 +22,7 @@ func NewLogSender(logger *slog.Logger) *LogSender {
 	return &LogSender{logger: logger}
 }
 
-func (sender *LogSender) Send(_ context.Context, notification domain.Notification) (string, error) {
+func (sender *LogSender) Send(_ context.Context, notification domain.Notification) (Result, error) {
 	providerMessageID := uuid.NewString()
 	sender.logger.Info("simulated delivery",
 		slog.String("notification_id", notification.ID.String()),
@@ -29,5 +30,9 @@ func (sender *LogSender) Send(_ context.Context, notification domain.Notificatio
 		slog.String("recipient", notification.Recipient),
 		slog.String("provider_message_id", providerMessageID),
 	)
-	return providerMessageID, nil
+	return Result{
+		ProviderMessageID: providerMessageID,
+		StatusCode:        202,
+		Body:              fmt.Sprintf(`{"messageId":%q,"status":"accepted","simulated":true}`, providerMessageID),
+	}, nil
 }

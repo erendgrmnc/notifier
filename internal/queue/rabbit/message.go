@@ -28,5 +28,9 @@ type StatusEvent struct {
 	Channel        string    `json:"channel"`
 	Attempts       int       `json:"attempts"`
 	LastError      string    `json:"last_error,omitempty"`
-	OccurredAt     time.Time `json:"occurred_at"`
+	// Provider fields are set on sent events so live listeners can show
+	// exactly what the provider answered.
+	ProviderMessageID string    `json:"provider_message_id,omitempty"`
+	ProviderResponse  string    `json:"provider_response,omitempty"`
+	OccurredAt        time.Time `json:"occurred_at"`
 }

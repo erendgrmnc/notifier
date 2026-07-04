@@ -113,12 +113,12 @@ type fakeSender struct {
 	failure error
 }
 
-func (sender *fakeSender) Send(_ context.Context, notification domain.Notification) (string, error) {
+func (sender *fakeSender) Send(_ context.Context, notification domain.Notification) (delivery.Result, error) {
 	if sender.failure != nil {
-		return "", sender.failure
+		return delivery.Result{}, sender.failure
 	}
 	sender.sent = append(sender.sent, notification)
-	return "provider-msg-1", nil
+	return delivery.Result{ProviderMessageID: "provider-msg-1", StatusCode: 202, Body: `{"messageId":"provider-msg-1"}`}, nil
 }
 
 type fakePauseChecker struct {

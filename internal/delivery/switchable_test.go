@@ -19,18 +19,18 @@ func (lookup *fakeLookup) ProviderOverride(context.Context) (string, error) {
 
 type recordingSender struct{ sent int }
 
-func (sender *recordingSender) Send(context.Context, domain.Notification) (string, error) {
+func (sender *recordingSender) Send(context.Context, domain.Notification) (Result, error) {
 	sender.sent++
-	return "fallback-id", nil
+	return Result{ProviderMessageID: "fallback-id"}, nil
 }
 
 func TestSwitchableSenderFallsBackWithoutOverride(t *testing.T) {
 	fallback := &recordingSender{}
 	sender := NewSwitchableSender(&fakeLookup{}, fallback, time.Second)
 
-	providerMessageID, err := sender.Send(context.Background(), domain.Notification{})
-	if err != nil || providerMessageID != "fallback-id" {
-		t.Fatalf("Send = %q, %v; want fallback", providerMessageID, err)
+	sendResult, err := sender.Send(context.Background(), domain.Notification{})
+	if err != nil || sendResult.ProviderMessageID != "fallback-id" {
+		t.Fatalf("Send = %q, %v; want fallback", sendResult.ProviderMessageID, err)
 	}
 	if fallback.sent != 1 {
 		t.Errorf("fallback sent = %d, want 1", fallback.sent)
@@ -50,11 +50,11 @@ func TestSwitchableSenderFollowsOverride(t *testing.T) {
 	lookup := &fakeLookup{url: server.URL}
 	sender := NewSwitchableSender(lookup, fallback, time.Second)
 
-	providerMessageID, err := sender.Send(context.Background(), domain.Notification{
+	sendResult, err := sender.Send(context.Background(), domain.Notification{
 		Recipient: "+905551234567", Channel: domain.ChannelSMS, Content: "x",
 	})
-	if err != nil || providerMessageID != "override-id" {
-		t.Fatalf("Send = %q, %v; want override target", providerMessageID, err)
+	if err != nil || sendResult.ProviderMessageID != "override-id" {
+		t.Fatalf("Send = %q, %v; want override target", sendResult.ProviderMessageID, err)
 	}
 	if fallback.sent != 0 || received != 1 {
 		t.Errorf("fallback=%d received=%d, want 0/1", fallback.sent, received)

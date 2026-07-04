@@ -260,10 +260,13 @@
     border: 1px solid var(--edge); border-radius: 4px; padding: 1px 7px; cursor: pointer; flex-shrink: 0; }
   .ws-row button:hover { color: var(--paper); border-color: var(--dim); }
   .event-row { display: flex; gap: 8px; align-items: baseline; font: 10.5px var(--mono);
-    padding: 2px 0; border-bottom: 1px solid rgba(38,50,82,.35); }
+    padding: 2px 0; }
   .event-row .t { color: var(--dim); flex-shrink: 0; }
   .event-row .via { color: var(--info); flex-shrink: 0; }
   .event-row .nid { color: var(--dim); flex-shrink: 0; }
+  .event-row-wrap { border-bottom: 1px solid rgba(38,50,82,.35); }
+  .provider-response { font: 10px var(--mono); color: var(--ok); opacity: .85;
+    padding: 0 0 3px 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* ---- wire log ---- */
   .wire-panel > h2 button { margin-left: auto; font: 600 10px var(--mono); letter-spacing: .08em;
@@ -288,6 +291,9 @@
   .wire-line .c.bad { color: var(--fail); }
   .wire-line .body { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
   .wire-line .x { color: var(--dim); font-size: 10px; }
+  .wire-line .rid { color: var(--dim); font-size: 10px; flex: 0 0 auto; cursor: pointer;
+    border-bottom: 1px dotted var(--dim); }
+  .wire-line .rid:hover { color: var(--paper); border-bottom-color: var(--paper); }
   .wire-divider { color: var(--signal); font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase;
     padding: 6px 0 3px; }
   .wire-divider::before { content: "── "; color: var(--edge); }
@@ -489,7 +495,8 @@ async function api(path, options, silent) {
   const method = (options && options.method) || "GET";
   const response = await fetch(path, options);
   const body = await response.json().catch(() => ({}));
-  if (!silent) recordWire(method, path, options && options.body, response.status, body);
+  const requestID = response.headers.get("X-Request-ID") || "";
+  if (!silent) recordWire(method, path, options && options.body, response.status, body, requestID);
   return { status: response.status, body };
 }
 async function apiOK(path, options, silent) {
@@ -537,18 +544,20 @@ function wirePreview(raw) {
   return parts.join(" ").slice(0, 140);
 }
 
-function recordWire(method, path, requestBody, status, responseBody) {
+function recordWire(method, path, requestBody, status, responseBody, requestID) {
   const shortPath = path.replace(/^\/api\/v1/, "").replace(/([0-9a-f]{8})[0-9a-f-]{28}/g, "$1…");
   const last = wireEntries[wireEntries.length - 1];
   // Coalesce repeats (drain polls, bursts): same method+path+status → ×N.
   if (last && !last.divider && last.method === method && last.path === shortPath && last.status === status) {
     last.count++;
     last.response = wirePreview(responseBody);
+    last.requestID = requestID || last.requestID;
     last.time = new Date();
   } else {
     wireEntries.push({
       method, path: shortPath, status,
       request: wirePreview(requestBody), response: wirePreview(responseBody),
+      requestID: requestID || "",
       count: 1, time: new Date(),
     });
     if (wireEntries.length > WIRE_CAP) wireEntries.splice(0, wireEntries.length - WIRE_CAP);
@@ -563,6 +572,16 @@ function wireDivider(label) {
 }
 
 function clearWire() { wireEntries.length = 0; renderWire(); }
+
+// Copy the full correlation id so it can be pasted into a log grep;
+// the tag only shows the first 8 characters.
+function copyRequestID(tag, requestID) {
+  navigator.clipboard.writeText(requestID).then(() => {
+    const shown = tag.textContent;
+    tag.textContent = "copied";
+    setTimeout(() => { tag.textContent = shown; }, 900);
+  }).catch(() => showError("clipboard unavailable; correlation id: " + requestID));
+}
 
 function renderWire() {
   const container = document.getElementById("wire");
@@ -582,6 +601,8 @@ function renderWire() {
       <span class="c ${statusClass}">${entry.status}</span>
       ${entry.count > 1 ? `<span class="x">×${entry.count}</span>` : ""}
       <span class="body">${escapeHTML(summary)}</span>
+      ${entry.requestID ? `<span class="rid" onclick="copyRequestID(this, '${escapeHTML(entry.requestID)}')"
+        title="correlation id ${escapeHTML(entry.requestID)} — click to copy, then grep the api+worker logs for it">${escapeHTML(entry.requestID.slice(0, 8))}</span>` : ""}
     </div>`;
   }).join("");
   if (nearBottom) container.scrollTop = container.scrollHeight;
@@ -1232,6 +1253,9 @@ function renderNotifications(rows) {
     } else if (n.status === "scheduled" && n.scheduled_at) {
       const seconds = Math.max(0, Math.round((new Date(n.scheduled_at) - Date.now()) / 1000));
       detail = `⏱ fires in ${seconds}s — ` + escapeHTML((n.content || "").slice(0, 20));
+    } else if (n.status === "sent" && n.provider_message_id) {
+      detail = escapeHTML((n.content || "").slice(0, 20)) +
+        ` <span title="provider message id" style="color:var(--ok)">· msg ${escapeHTML(n.provider_message_id.slice(0, 8))}</span>`;
     } else {
       detail = escapeHTML((n.content || "").slice(0, 34));
     }
@@ -1512,13 +1536,17 @@ function renderWsPanel() {
     const nid = (event.notification_id || "").slice(0, 8);
     const status = event.status || "?";
     const attempts = event.attempts != null ? " att=" + event.attempts : "";
-    return `<div class="event-row">
+    // Sent events carry the provider's actual response body.
+    const providerLine = event.provider_response
+      ? `<div class="provider-response" title="provider response">↩ ${escapeHTML(event.provider_response)}</div>`
+      : "";
+    return `<div class="event-row-wrap"><div class="event-row">
       <span class="t">${entry.time.toLocaleTimeString()}</span>
       <span class="via">${escapeHTML(entry.via)}</span>
       <span class="nid">${escapeHTML(nid)}</span>
       <span class="chip ${escapeHTML(status)}">${escapeHTML(status)}</span>
       <span class="t">${escapeHTML(event.channel || "")}${attempts}</span>
-    </div>`;
+    </div>${providerLine}</div>`;
   }).join("");
 }
 

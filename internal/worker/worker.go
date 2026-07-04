@@ -29,7 +29,7 @@ type Repository interface {
 
 // Sender delivers one notification to the external provider.
 type Sender interface {
-	Send(ctx context.Context, notification domain.Notification) (providerMessageID string, err error)
+	Send(ctx context.Context, notification domain.Notification) (delivery.Result, error)
 }
 
 // Publisher schedules retries, records dead letters, and fans out
@@ -129,6 +129,23 @@ func (worker *Worker) emitEvent(ctx context.Context, logger *slog.Logger, notifi
 	}
 }
 
+// emitSentEvent is emitEvent for successful deliveries: it carries what
+// the provider answered so live listeners can display the real response.
+func (worker *Worker) emitSentEvent(ctx context.Context, logger *slog.Logger, notification domain.Notification, sendResult delivery.Result) {
+	event := rabbit.StatusEvent{
+		NotificationID:    notification.ID,
+		Status:            string(domain.StatusSent),
+		Channel:           string(notification.Channel),
+		Attempts:          notification.Attempts,
+		ProviderMessageID: sendResult.ProviderMessageID,
+		ProviderResponse:  sendResult.Body,
+		OccurredAt:        worker.clock.Now(),
+	}
+	if err := worker.publisher.PublishEvent(ctx, event); err != nil {
+		logger.Warn("status event publish failed", slog.Any("error", err))
+	}
+}
+
 // processNotification handles one consumed message. A nil return means
 // the message is settled (delivered, scheduled for retry, failed, or
 // deliberately dropped) and must be acked; an error means infrastructure
@@ -173,7 +190,7 @@ func (worker *Worker) processNotification(ctx context.Context, id uuid.UUID) err
 	}
 
 	sendStarted := worker.clock.Now()
-	providerMessageID, sendErr := worker.sender.Send(ctx, claimed)
+	sendResult, sendErr := worker.sender.Send(ctx, claimed)
 	sendDuration := worker.clock.Now().Sub(sendStarted)
 
 	// The send is irreversible; its outcome is written on a detached
@@ -191,7 +208,7 @@ func (worker *Worker) processNotification(ctx context.Context, id uuid.UUID) err
 	}
 	worker.recordAttempt(claimed.Channel, "success", sendDuration)
 
-	if err := worker.repo.MarkSent(outcomeCtx, id, providerMessageID, worker.clock.Now()); err != nil {
+	if err := worker.repo.MarkSent(outcomeCtx, id, sendResult.ProviderMessageID, worker.clock.Now()); err != nil {
 		if errors.Is(err, domain.ErrInvalidTransition) {
 			logger.Warn("sent notification changed status concurrently")
 			return nil
@@ -199,10 +216,10 @@ func (worker *Worker) processNotification(ctx context.Context, id uuid.UUID) err
 		return fmt.Errorf("mark sent: %w", err)
 	}
 	worker.recordDelivered(claimed.Channel, domain.StatusSent)
-	worker.emitEvent(outcomeCtx, logger, claimed, domain.StatusSent, "")
+	worker.emitSentEvent(outcomeCtx, logger, claimed, sendResult)
 
 	logger.Info("notification delivered",
-		slog.String("provider_message_id", providerMessageID),
+		slog.String("provider_message_id", sendResult.ProviderMessageID),
 		slog.Int("attempt", claimed.Attempts),
 	)
 	return nil

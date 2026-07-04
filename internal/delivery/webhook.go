@@ -64,43 +64,58 @@ func NewWebhookSender(providerURL string, timeout time.Duration) *WebhookSender 
 	}
 }
 
-func (sender *WebhookSender) Send(ctx context.Context, notification domain.Notification) (string, error) {
+func (sender *WebhookSender) Send(ctx context.Context, notification domain.Notification) (Result, error) {
 	payload, err := json.Marshal(providerRequest{
 		To:      notification.Recipient,
 		Channel: string(notification.Channel),
 		Content: notification.Content,
 	})
 	if err != nil {
-		return "", fmt.Errorf("marshal provider request: %w", err)
+		return Result{}, fmt.Errorf("marshal provider request: %w", err)
 	}
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, sender.providerURL, bytes.NewReader(payload))
 	if err != nil {
-		return "", fmt.Errorf("build provider request: %w", err)
+		return Result{}, fmt.Errorf("build provider request: %w", err)
 	}
 	request.Header.Set("Content-Type", "application/json")
 
 	response, err := sender.client.Do(request)
 	if err != nil {
-		return "", &SendError{Retryable: true, Message: fmt.Sprintf("provider unreachable: %v", err)}
+		return Result{}, &SendError{Retryable: true, Message: fmt.Sprintf("provider unreachable: %v", err)}
 	}
 	defer response.Body.Close()
 
 	switch {
 	case response.StatusCode >= 200 && response.StatusCode < 300:
-		return parseProviderMessageID(response.Body), nil
+		body := readBodySnapshot(response.Body)
+		return Result{
+			ProviderMessageID: parseProviderMessageID(body),
+			StatusCode:        response.StatusCode,
+			Body:              body,
+		}, nil
 	case response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500:
-		return "", &SendError{StatusCode: response.StatusCode, Retryable: true, Message: readErrorBody(response.Body)}
+		return Result{}, &SendError{StatusCode: response.StatusCode, Retryable: true, Message: readErrorBody(response.Body)}
 	default:
-		return "", &SendError{StatusCode: response.StatusCode, Retryable: false, Message: readErrorBody(response.Body)}
+		return Result{}, &SendError{StatusCode: response.StatusCode, Retryable: false, Message: readErrorBody(response.Body)}
 	}
+}
+
+// maxResponseSnapshotBytes bounds the body carried on status events.
+const maxResponseSnapshotBytes = 300
+
+// readBodySnapshot captures up to maxResponseSnapshotBytes of the
+// provider response for display.
+func readBodySnapshot(body io.Reader) string {
+	snapshot, _ := io.ReadAll(io.LimitReader(body, maxResponseSnapshotBytes))
+	return string(snapshot)
 }
 
 // parseProviderMessageID tolerates providers (like a fresh webhook.site
 // URL) that return 2xx without the documented JSON body.
-func parseProviderMessageID(body io.Reader) string {
+func parseProviderMessageID(body string) string {
 	var parsed providerResponse
-	if err := json.NewDecoder(body).Decode(&parsed); err != nil {
+	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
 		return ""
 	}
 	return parsed.MessageID
