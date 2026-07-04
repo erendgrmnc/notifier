@@ -9,6 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	dto "github.com/prometheus/client_model/go"
 )
 
 // Metrics owns the service's Prometheus registry and instruments. It is
@@ -64,6 +65,12 @@ func NewMetrics() *Metrics {
 // Handler serves the registry for Prometheus scrapes.
 func (metrics *Metrics) Handler() http.Handler {
 	return promhttp.HandlerFor(metrics.registry, promhttp.HandlerOpts{})
+}
+
+// GatherFamilies exposes the registry contents for in-process summaries
+// (the dashboard's metrics panel).
+func (metrics *Metrics) GatherFamilies() ([]*dto.MetricFamily, error) {
+	return metrics.registry.Gather()
 }
 
 func (metrics *Metrics) NotificationCreated(channel, priority string) {

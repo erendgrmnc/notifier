@@ -22,6 +22,9 @@ type RouterConfig struct {
 	Metrics        HTTPMetrics
 	MetricsHandler http.Handler
 	Readiness      ReadinessChecks
+	// Gatherer + WorkerMetricsURL feed the dashboard's metrics summary.
+	Gatherer         MetricsGatherer
+	WorkerMetricsURL string
 
 	// Testing-dashboard dependencies; mounted only when DashboardEnabled.
 	DashboardEnabled bool
@@ -81,6 +84,10 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 			v1.Get("/worker", dashboard.getWorkerState)
 			v1.Put("/worker", dashboard.setWorkerState)
 			v1.Get("/provider/messages", dashboard.getProviderMessages)
+			if cfg.Gatherer != nil {
+				summaryHandler := newMetricsSummaryHandler(cfg.Gatherer, cfg.WorkerMetricsURL)
+				v1.Get("/metrics/summary", summaryHandler.serve)
+			}
 		}
 	})
 

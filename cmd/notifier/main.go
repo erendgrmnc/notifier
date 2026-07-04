@@ -157,6 +157,8 @@ func run() error {
 			Metrics:          metrics,
 			MetricsHandler:   metrics.Handler(),
 			Readiness:        readiness,
+			Gatherer:         metrics,
+			WorkerMetricsURL: cfg.WorkerMetricsURL,
 			DashboardEnabled: cfg.DashboardEnabled,
 			WorkerControl:    repository,
 			Queues:           inspector,

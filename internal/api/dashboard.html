@@ -145,6 +145,25 @@
   .msg.push  { background: #33270f; border: 1px solid rgba(255,180,84,.3); }
   .empty { color: var(--dim); font-style: italic; font-size: 12px; padding: 6px 0; }
 
+  /* ---- pipeline metrics ---- */
+  .sources { font-size: 9px; letter-spacing: .08em; color: var(--dim); text-transform: none; }
+  .headline { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 10px; }
+  .stat { background: var(--panel-2); border: 1px solid var(--edge); border-radius: 7px;
+    padding: 7px 4px; text-align: center; }
+  .stat .value { font: 700 16px var(--mono); }
+  .stat .value.ok { color: var(--ok); }
+  .stat .value.bad { color: var(--fail); }
+  .stat .value.rate { color: var(--signal); }
+  .stat .label { font: 9.5px var(--mono); letter-spacing: .1em; color: var(--dim); text-transform: uppercase; margin-top: 2px; }
+  .metric-row { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0;
+    font: 11px var(--mono); border-bottom: 1px dashed rgba(38,50,82,.5); }
+  .metric-row:last-child { border-bottom: 0; }
+  .metric-row .k { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .metric-row .v { font-weight: 600; flex-shrink: 0; }
+  .metric-group { font: 9.5px var(--mono); letter-spacing: .12em; color: var(--dim);
+    text-transform: uppercase; margin: 9px 0 3px; }
+  .metric-group:first-child { margin-top: 0; }
+
   /* ---- wire log ---- */
   .wire-panel > h2 button { margin-left: auto; font: 600 10px var(--mono); letter-spacing: .08em;
     background: transparent; color: var(--dim); border: 1px solid var(--edge); border-radius: 4px;
@@ -185,10 +204,17 @@
 <div id="error-bar" role="alert"></div>
 
 <div class="layout">
-  <!-- left: scenarios -->
-  <div class="panel">
-    <h2>Scenarios</h2>
-    <div id="scenarios"></div>
+  <!-- left: scenarios + metrics -->
+  <div class="stack">
+    <div class="panel">
+      <h2>Scenarios</h2>
+      <div id="scenarios"></div>
+    </div>
+    <div class="panel">
+      <h2>Pipeline metrics <span id="metrics-sources" class="sources"></span></h2>
+      <div id="metrics-headline" class="headline"></div>
+      <div id="metrics-detail"><p class="empty">reading…</p></div>
+    </div>
   </div>
 
   <!-- center: live system -->
@@ -767,19 +793,66 @@ function renderClients(messages) {
   ).join("");
 }
 
+function sumValues(rows, predicate) {
+  return (rows || []).filter(predicate || (() => true)).reduce((total, row) => total + row.value, 0);
+}
+
+function renderMetrics(summary) {
+  document.getElementById("metrics-sources").textContent = "· " + (summary.sources || []).join("+");
+
+  const created = sumValues(summary.created);
+  const sent = sumValues(summary.delivered, row => row.labels.status === "sent");
+  const failed = sumValues(summary.delivered, row => row.labels.status === "failed");
+  const terminal = sent + failed;
+  const successRate = terminal > 0 ? (sent / terminal * 100).toFixed(1) + "%" : "–";
+
+  document.getElementById("metrics-headline").innerHTML = `
+    <div class="stat"><div class="value">${created}</div><div class="label">created</div></div>
+    <div class="stat"><div class="value ok">${sent}</div><div class="label">sent</div></div>
+    <div class="stat"><div class="value bad">${failed}</div><div class="label">failed</div></div>
+    <div class="stat"><div class="value rate">${successRate}</div><div class="label">success</div></div>`;
+
+  const rows = [];
+  if ((summary.attempts || []).length) {
+    rows.push('<div class="metric-group">attempts by outcome</div>');
+    for (const attempt of summary.attempts) {
+      rows.push(`<div class="metric-row"><span class="k">${attempt.labels.channel} · ${attempt.labels.outcome}</span>` +
+        `<span class="v">${attempt.value}</span></div>`);
+    }
+  }
+  if ((summary.delivery_latency || []).length) {
+    rows.push('<div class="metric-group">provider latency (avg)</div>');
+    for (const latency of summary.delivery_latency) {
+      rows.push(`<div class="metric-row"><span class="k">${latency.labels.channel}</span>` +
+        `<span class="v">${latency.avg_ms.toFixed(1)}ms · n=${latency.count}</span></div>`);
+    }
+  }
+  if ((summary.http_latency || []).length) {
+    rows.push('<div class="metric-group">http latency (avg, busiest)</div>');
+    for (const route of summary.http_latency.slice(0, 5)) {
+      rows.push(`<div class="metric-row"><span class="k">${route.labels.method} ${escapeHTML(route.labels.route)} ${route.labels.code}</span>` +
+        `<span class="v">${route.avg_ms.toFixed(1)}ms</span></div>`);
+    }
+  }
+  document.getElementById("metrics-detail").innerHTML =
+    rows.join("") || '<p class="empty">no samples yet — send something</p>';
+}
+
 async function refresh() {
   try {
     // Background polling is silent on the wire log by design.
-    const [worker, queues, notifications, provider] = await Promise.all([
+    const [worker, queues, notifications, provider, summary] = await Promise.all([
       apiOK("/api/v1/worker", undefined, true),
       apiOK("/api/v1/queues", undefined, true),
       apiOK("/api/v1/notifications?limit=20", undefined, true),
       apiOK("/api/v1/provider/messages", undefined, true),
+      apiOK("/api/v1/metrics/summary", undefined, true),
     ]);
     renderWorker(worker.paused);
     renderQueues(queues.queues);
     renderNotifications(notifications.data || []);
     renderClients(provider.messages || []);
+    renderMetrics(summary);
     clearError();
   } catch (err) { showError("refresh failed: " + err.message); }
 }

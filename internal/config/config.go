@@ -50,6 +50,9 @@ type Config struct {
 	// DashboardEnabled mounts the testing dashboard, worker controls,
 	// queue inspection, and the built-in mock provider.
 	DashboardEnabled bool
+	// WorkerMetricsURL lets a split-role api merge the worker's metrics
+	// into the dashboard summary. Empty skips the merge.
+	WorkerMetricsURL string
 	// RateLimitPerChannel caps deliveries per second per channel. With N
 	// worker replicas the effective limit is N× this value; set to
 	// limit/N when scaling out.
@@ -117,6 +120,7 @@ func Load(lookup LookupFunc) (Config, error) {
 	if err := parseBool(lookup, "DASHBOARD_ENABLED", &cfg.DashboardEnabled); err != nil {
 		return Config{}, err
 	}
+	cfg.WorkerMetricsURL = lookup("WORKER_METRICS_URL")
 	if err := parseInt(lookup, "RATE_LIMIT_PER_CHANNEL", &cfg.RateLimitPerChannel); err != nil {
 		return Config{}, err
 	}

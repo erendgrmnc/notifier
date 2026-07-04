@@ -41,6 +41,8 @@ services:
       DATABASE_URL: postgres://notifier:notifier@postgres:5432/notifier?sslmode=disable
       RABBITMQ_URL: amqp://notifier:notifier@rabbitmq:5672/
       DASHBOARD_ENABLED: ${DASHBOARD_ENABLED:-true}
+      # Dashboard merges the worker's delivery metrics into its summary.
+      WORKER_METRICS_URL: http://worker:8081/metrics
     ports:
       - "8081:8081"
     depends_on:
