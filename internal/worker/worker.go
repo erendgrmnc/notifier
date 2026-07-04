@@ -16,6 +16,7 @@ import (
 	"notifier/internal/delivery"
 	"notifier/internal/domain"
 	"notifier/internal/observability"
+	"notifier/internal/queue/rabbit"
 )
 
 // Repository is what the worker needs from persistence.
@@ -31,10 +32,12 @@ type Sender interface {
 	Send(ctx context.Context, notification domain.Notification) (providerMessageID string, err error)
 }
 
-// Publisher schedules retries and records dead letters.
+// Publisher schedules retries, records dead letters, and fans out
+// status events for live listeners.
 type Publisher interface {
 	PublishRetry(ctx context.Context, notification domain.Notification, attempt int) error
 	PublishDeadLetter(ctx context.Context, notification domain.Notification, reason string) error
+	PublishEvent(ctx context.Context, event rabbit.StatusEvent) error
 }
 
 // PauseChecker reports whether delivery processing is paused (the
@@ -110,6 +113,22 @@ func (worker *Worker) recordDelivered(channel domain.Channel, status domain.Stat
 	}
 }
 
+// emitEvent fans the transition out to live listeners; failures are
+// logged only — events never affect delivery correctness.
+func (worker *Worker) emitEvent(ctx context.Context, logger *slog.Logger, notification domain.Notification, status domain.Status, lastError string) {
+	event := rabbit.StatusEvent{
+		NotificationID: notification.ID,
+		Status:         string(status),
+		Channel:        string(notification.Channel),
+		Attempts:       notification.Attempts,
+		LastError:      lastError,
+		OccurredAt:     worker.clock.Now(),
+	}
+	if err := worker.publisher.PublishEvent(ctx, event); err != nil {
+		logger.Warn("status event publish failed", slog.Any("error", err))
+	}
+}
+
 // processNotification handles one consumed message. A nil return means
 // the message is settled (delivered, scheduled for retry, failed, or
 // deliberately dropped) and must be acked; an error means infrastructure
@@ -179,6 +198,7 @@ func (worker *Worker) processNotification(ctx context.Context, id uuid.UUID) err
 		return fmt.Errorf("mark sent: %w", err)
 	}
 	worker.recordDelivered(claimed.Channel, domain.StatusSent)
+	worker.emitEvent(outcomeCtx, logger, claimed, domain.StatusSent, "")
 
 	logger.Info("notification delivered",
 		slog.String("provider_message_id", providerMessageID),
@@ -214,6 +234,7 @@ func (worker *Worker) handleSendFailure(ctx context.Context, logger *slog.Logger
 			// nack-redelivery of the original message recovers this.
 			return fmt.Errorf("publish retry: %w", err)
 		}
+		worker.emitEvent(ctx, logger, claimed, domain.StatusRetrying, sendErr.Error())
 		logger.Info("delivery failed; retry scheduled")
 		return nil
 	}
@@ -227,6 +248,7 @@ func (worker *Worker) handleSendFailure(ctx context.Context, logger *slog.Logger
 		return fmt.Errorf("mark failed: %w", err)
 	}
 	worker.recordDelivered(claimed.Channel, domain.StatusFailed)
+	worker.emitEvent(ctx, logger, claimed, domain.StatusFailed, sendErr.Error())
 	// DLQ publish failure is logged, not retried: the database row is the
 	// source of truth and already records the failure.
 	if err := worker.publisher.PublishDeadLetter(ctx, claimed, reason); err != nil {

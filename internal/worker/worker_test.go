@@ -13,6 +13,7 @@ import (
 
 	"notifier/internal/delivery"
 	"notifier/internal/domain"
+	"notifier/internal/queue/rabbit"
 )
 
 type fakeRepository struct {
@@ -85,7 +86,13 @@ type retryPublish struct {
 type fakePublisher struct {
 	retries      []retryPublish
 	deadLetters  []uuid.UUID
+	events       []rabbit.StatusEvent
 	retryFailure error
+}
+
+func (publisher *fakePublisher) PublishEvent(_ context.Context, event rabbit.StatusEvent) error {
+	publisher.events = append(publisher.events, event)
+	return nil
 }
 
 func (publisher *fakePublisher) PublishRetry(_ context.Context, notification domain.Notification, attempt int) error {
@@ -249,6 +256,9 @@ func TestProcessDeliversQueuedNotification(t *testing.T) {
 	}
 	if stored.Attempts != 1 {
 		t.Errorf("attempts = %d, want 1", stored.Attempts)
+	}
+	if publisher := queueWorker.publisher.(*fakePublisher); len(publisher.events) != 1 || publisher.events[0].Status != "sent" {
+		t.Errorf("events = %+v, want one sent event", publisher.events)
 	}
 	if stored.ProviderMessageID == nil || *stored.ProviderMessageID != "provider-msg-1" {
 		t.Errorf("provider_message_id = %v, want provider-msg-1", stored.ProviderMessageID)

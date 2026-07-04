@@ -20,6 +20,10 @@ const (
 	DeadLetterExchange = "notifications.dlx"
 	DeadLetterQueue    = "notifications.dlq"
 
+	// EventsExchange fans status-change events out to live listeners
+	// (the WebSocket hub). Events are best-effort and transient.
+	EventsExchange = "notifications.events"
+
 	// maxPriority enables 0-10 message priorities on the work queues.
 	// Queue arguments are immutable after declaration.
 	maxPriority = 10
@@ -124,6 +128,10 @@ func DeclareTopology(conn *amqp.Connection) error {
 		if err := declareRetryTier(channel, tier); err != nil {
 			return err
 		}
+	}
+
+	if err := channel.ExchangeDeclare(EventsExchange, amqp.ExchangeFanout, true, false, false, false, nil); err != nil {
+		return fmt.Errorf("declare exchange %s: %w", EventsExchange, err)
 	}
 
 	return declareDeadLetter(channel)

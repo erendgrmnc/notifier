@@ -13,6 +13,7 @@ import (
 
 	"notifier/internal/domain"
 	"notifier/internal/observability"
+	"notifier/internal/queue/rabbit"
 )
 
 // Repository is what this service needs from persistence.
@@ -32,9 +33,11 @@ const (
 	MaxListLimit     = 100
 )
 
-// Publisher hands a created notification to the queue for delivery.
+// Publisher hands created notifications to the queue and fans out
+// status events for live listeners.
 type Publisher interface {
 	PublishCreated(ctx context.Context, notification domain.Notification) error
+	PublishEvent(ctx context.Context, event rabbit.StatusEvent) error
 }
 
 // Clock supplies time so scheduling logic is testable.
@@ -83,6 +86,20 @@ func (svc *NotificationService) resolveContent(ctx context.Context, input Create
 func (svc *NotificationService) recordCreated(notification domain.Notification) {
 	if svc.metrics != nil {
 		svc.metrics.NotificationCreated(string(notification.Channel), string(notification.Priority))
+	}
+}
+
+// emitEvent fans a status change out to live listeners, best-effort.
+func (svc *NotificationService) emitEvent(ctx context.Context, notification domain.Notification, status domain.Status) {
+	event := rabbit.StatusEvent{
+		NotificationID: notification.ID,
+		Status:         string(status),
+		Channel:        string(notification.Channel),
+		Attempts:       notification.Attempts,
+		OccurredAt:     svc.clock.Now(),
+	}
+	if err := svc.publisher.PublishEvent(ctx, event); err != nil {
+		observability.LoggerFrom(ctx, svc.logger).Warn("status event publish failed", slog.Any("error", err))
 	}
 }
 
@@ -178,6 +195,7 @@ func (svc *NotificationService) Cancel(ctx context.Context, id uuid.UUID) (domai
 	if err != nil {
 		return domain.Notification{}, fmt.Errorf("load cancelled notification: %w", err)
 	}
+	svc.emitEvent(ctx, cancelled, domain.StatusCancelled)
 	return cancelled, nil
 }
 
@@ -204,6 +222,7 @@ func (svc *NotificationService) publishForDelivery(ctx context.Context, notifica
 	}
 
 	notification.Status = domain.StatusQueued
+	svc.emitEvent(ctx, notification, domain.StatusQueued)
 	return notification
 }
 

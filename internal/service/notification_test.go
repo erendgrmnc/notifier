@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"notifier/internal/domain"
+	"notifier/internal/queue/rabbit"
 )
 
 type fakeRepository struct {
@@ -89,7 +90,13 @@ func (repo *fakeRepository) UpdateStatus(_ context.Context, id uuid.UUID, to dom
 
 type fakePublisher struct {
 	published []domain.Notification
+	events    []rabbit.StatusEvent
 	failure   error
+}
+
+func (publisher *fakePublisher) PublishEvent(_ context.Context, event rabbit.StatusEvent) error {
+	publisher.events = append(publisher.events, event)
+	return nil
 }
 
 func (publisher *fakePublisher) PublishCreated(_ context.Context, notification domain.Notification) error {

@@ -80,6 +80,19 @@ func (publisher *Publisher) PublishDeadLetter(ctx context.Context, notification 
 	})
 }
 
+// PublishEvent fans a status change out to live listeners. Best-effort:
+// callers log failures and move on — events are UX, not state.
+func (publisher *Publisher) PublishEvent(ctx context.Context, event StatusEvent) error {
+	body, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("marshal status event: %w", err)
+	}
+	return publisher.publishConfirmed(ctx, EventsExchange, "", amqp.Publishing{
+		ContentType: "application/json",
+		Body:        body, // transient: no persistence for ephemeral events
+	})
+}
+
 // publishNotification sends the standard queue message for a notification
 // to the given exchange, keyed by channel so the routing key survives
 // retry-tier expiry.
