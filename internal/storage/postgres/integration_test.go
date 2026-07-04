@@ -45,6 +45,12 @@ func integrationRepo(t *testing.T) *NotificationRepository {
 		if err != nil {
 			t.Fatalf("connect test database: %v", err)
 		}
+		// Twice on purpose: the boot-time declare must be idempotent.
+		for range 2 {
+			if err := EnsureWorkerControl(context.Background(), pool); err != nil {
+				t.Fatalf("ensure worker control: %v", err)
+			}
+		}
 		integrationPool = pool
 	})
 
@@ -313,5 +319,38 @@ func TestIntegrationTemplateRepository(t *testing.T) {
 	}
 	if _, err := repo.GetTemplateByName(ctx, "missing"); !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("missing template error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestIntegrationWorkerControlRoundTrip(t *testing.T) {
+	repo := integrationRepo(t) // migrate + ensure control table
+	ctx := context.Background()
+
+	// Reset to defaults: the shared test database persists across runs.
+	if err := repo.SetWorkerPaused(ctx, false); err != nil {
+		t.Fatalf("reset pause flag: %v", err)
+	}
+	if err := repo.SetProviderOverride(ctx, ""); err != nil {
+		t.Fatalf("reset provider override: %v", err)
+	}
+
+	if paused, err := repo.WorkerPaused(ctx); err != nil || paused {
+		t.Errorf("WorkerPaused = %v, %v; want false", paused, err)
+	}
+	if err := repo.SetWorkerPaused(ctx, true); err != nil {
+		t.Fatalf("SetWorkerPaused: %v", err)
+	}
+	if paused, err := repo.WorkerPaused(ctx); err != nil || !paused {
+		t.Errorf("WorkerPaused after set = %v, %v; want true", paused, err)
+	}
+
+	if override, err := repo.ProviderOverride(ctx); err != nil || override != "" {
+		t.Errorf("ProviderOverride = %q, %v; want empty", override, err)
+	}
+	if err := repo.SetProviderOverride(ctx, "https://example.test/hook"); err != nil {
+		t.Fatalf("SetProviderOverride: %v", err)
+	}
+	if override, err := repo.ProviderOverride(ctx); err != nil || override != "https://example.test/hook" {
+		t.Errorf("ProviderOverride after set = %q, %v", override, err)
 	}
 }

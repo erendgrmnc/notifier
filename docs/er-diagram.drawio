@@ -96,9 +96,9 @@
           <mxGeometry x="0" y="78" width="300" height="48" as="geometry" />
         </mxCell>
 
-        <!-- worker_control: single-row operational flag -->
-        <mxCell id="workerctl" value="worker_control" style="swimlane;html=1;fontStyle=1;startSize=30;horizontal=1;fillColor=#fff2cc;strokeColor=#d6b656;swimlaneFillColor=#ffffff;" vertex="1" parent="1">
-          <mxGeometry x="80" y="500" width="300" height="126" as="geometry" />
+        <!-- worker_control: single-row runtime state, declared at boot (not migrated) -->
+        <mxCell id="workerctl" value="worker_control (boot-declared)" style="swimlane;html=1;fontStyle=1;startSize=30;horizontal=1;fillColor=#fff2cc;strokeColor=#d6b656;swimlaneFillColor=#ffffff;" vertex="1" parent="1">
+          <mxGeometry x="80" y="500" width="300" height="150" as="geometry" />
         </mxCell>
         <mxCell id="wc1" value="id : SMALLINT — PK, CHECK (id = 1)" style="text;html=1;align=left;spacingLeft=8;fontStyle=4;" vertex="1" parent="workerctl">
           <mxGeometry x="0" y="30" width="300" height="24" as="geometry" />
@@ -106,11 +106,14 @@
         <mxCell id="wc2" value="paused : BOOLEAN — default false" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="workerctl">
           <mxGeometry x="0" y="54" width="300" height="24" as="geometry" />
         </mxCell>
-        <mxCell id="wc3" value="updated_at : TIMESTAMPTZ — default now()" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="workerctl">
+        <mxCell id="wc5" value="provider_url : TEXT — default '' (runtime override)" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="workerctl">
           <mxGeometry x="0" y="78" width="300" height="24" as="geometry" />
         </mxCell>
-        <mxCell id="wc4" value="single row: shared pause flag polled by workers" style="text;html=1;align=left;spacingLeft=8;fontStyle=2;fontColor=#666666;" vertex="1" parent="workerctl">
+        <mxCell id="wc3" value="updated_at : TIMESTAMPTZ — default now()" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="workerctl">
           <mxGeometry x="0" y="102" width="300" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="wc4" value="runtime state declared idempotently at boot — not in versioned migrations" style="text;html=1;align=left;spacingLeft=8;fontStyle=2;fontColor=#666666;" vertex="1" parent="workerctl">
+          <mxGeometry x="0" y="126" width="300" height="24" as="geometry" />
         </mxCell>
 
         <!-- logical relation: template renders notification content at enqueue -->

@@ -61,7 +61,7 @@
         <mxCell id="provider" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="Provider&#xa;webhook.site or built-in&#xa;mock (dashboard default)" vertex="1">
           <mxGeometry height="80" width="170" x="1410" y="280" as="geometry" />
         </mxCell>
-        <mxCell id="postgres" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#d5e8d4;strokeColor=#82b366;" value="PostgreSQL&#xa;notifications, notification_templates, worker_control (versioned migrations)" vertex="1">
+        <mxCell id="postgres" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#d5e8d4;strokeColor=#82b366;" value="PostgreSQL&#xa;notifications, notification_templates (versioned migrations)&#xa;worker_control (boot-declared runtime state)" vertex="1">
           <mxGeometry height="100" width="260" x="600" y="670" as="geometry" />
         </mxCell>
         <mxCell id="e1" edge="1" parent="1" source="client" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.35;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="httpapi" value="REST /api/v1">

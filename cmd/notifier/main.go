@@ -110,6 +110,12 @@ func run() error {
 	}
 	defer pool.Close()
 
+	// Operational state (pause flag, provider override) is declared at
+	// boot like the queue topology — it is not business schema.
+	if err := postgres.EnsureWorkerControl(ctx, pool); err != nil {
+		return fmt.Errorf("ensure worker control: %w", err)
+	}
+
 	rabbitConn, err := rabbit.Connect(cfg.RabbitURL)
 	if err != nil {
 		return fmt.Errorf("connect rabbitmq: %w", err)
