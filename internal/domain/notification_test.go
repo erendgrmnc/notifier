@@ -61,6 +61,32 @@ func TestCanTransition(t *testing.T) {
 	}
 }
 
+func TestStatusesAllowedInto(t *testing.T) {
+	testCases := []struct {
+		into Status
+		want []Status
+	}{
+		{into: StatusProcessing, want: []Status{StatusPending, StatusQueued, StatusRetrying}},
+		{into: StatusQueued, want: []Status{StatusPending, StatusScheduled}},
+		{into: StatusSent, want: []Status{StatusProcessing}},
+		{into: StatusCancelled, want: []Status{StatusPending, StatusScheduled, StatusQueued}},
+	}
+
+	for _, tc := range testCases {
+		t.Run(string(tc.into), func(t *testing.T) {
+			got := StatusesAllowedInto(tc.into)
+			if len(got) != len(tc.want) {
+				t.Fatalf("StatusesAllowedInto(%s) = %v, want %v", tc.into, got, tc.want)
+			}
+			for i, status := range tc.want {
+				if got[i] != status {
+					t.Errorf("StatusesAllowedInto(%s)[%d] = %s, want %s", tc.into, i, got[i], status)
+				}
+			}
+		})
+	}
+}
+
 func TestCancellableStatuses(t *testing.T) {
 	want := []Status{StatusPending, StatusScheduled, StatusQueued}
 	got := CancellableStatuses()

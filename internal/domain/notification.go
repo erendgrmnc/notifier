@@ -3,6 +3,7 @@
 package domain
 
 import (
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,12 +23,10 @@ func Channels() []Channel {
 	return []Channel{ChannelSMS, ChannelEmail, ChannelPush}
 }
 
+// Valid derives membership from Channels() so the API validation set and
+// the queue topology set can never diverge.
 func (c Channel) Valid() bool {
-	switch c {
-	case ChannelSMS, ChannelEmail, ChannelPush:
-		return true
-	}
-	return false
+	return slices.Contains(Channels(), c)
 }
 
 // Priority orders processing. Values match the Postgres priority enum.
@@ -79,6 +78,12 @@ var transitions = map[Status][]Status{
 	StatusCancelled:  nil,
 }
 
+// allStatuses fixes iteration order so derived sets are deterministic.
+var allStatuses = []Status{
+	StatusPending, StatusScheduled, StatusQueued, StatusProcessing,
+	StatusRetrying, StatusSent, StatusFailed, StatusCancelled,
+}
+
 // CanTransition reports whether moving from one status to another is legal.
 func CanTransition(from, to Status) bool {
 	for _, allowed := range transitions[from] {
@@ -89,9 +94,22 @@ func CanTransition(from, to Status) bool {
 	return false
 }
 
+// StatusesAllowedInto derives, from the transitions map, every status
+// with a legal transition into the given one. Guarded SQL updates use
+// this so their allowed-from sets cannot drift from the state machine.
+func StatusesAllowedInto(to Status) []Status {
+	var allowedFrom []Status
+	for _, from := range allStatuses {
+		if CanTransition(from, to) {
+			allowedFrom = append(allowedFrom, from)
+		}
+	}
+	return allowedFrom
+}
+
 // CancellableStatuses lists the states a cancel request may act on.
 func CancellableStatuses() []Status {
-	return []Status{StatusPending, StatusScheduled, StatusQueued}
+	return StatusesAllowedInto(StatusCancelled)
 }
 
 // Notification is one message to one recipient over one channel.
