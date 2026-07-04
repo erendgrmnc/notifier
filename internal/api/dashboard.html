@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Notifier — Testing Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #171e2e; --panel2: #1e2740; --line: #2a3550;
+    --text: #e6ebf5; --muted: #8b96ad; --accent: #4f8cff;
+    --ok: #34c98e; --warn: #f5b83d; --bad: #f06a6a; --info: #7aa7ff;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.45 ui-sans-serif, system-ui, "Segoe UI", sans-serif; padding: 20px; }
+  h1 { font-size: 18px; letter-spacing: .3px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin-bottom: 10px; }
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+  .layout { display: grid; grid-template-columns: 320px 1fr 1fr; gap: 14px; align-items: start; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .stack { display: grid; gap: 14px; }
+  label { display: block; color: var(--muted); font-size: 12px; margin: 8px 0 3px; }
+  input, select, textarea { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; font: inherit; }
+  textarea { resize: vertical; min-height: 54px; }
+  button { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 8px 12px; font: inherit; cursor: pointer; }
+  button.secondary { background: var(--panel2); border: 1px solid var(--line); color: var(--text); }
+  button:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 8px; margin-top: 10px; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .hint code { color: var(--warn); }
+  /* worker toggle */
+  .worker { display: flex; align-items: center; gap: 10px; }
+  .worker button { min-width: 130px; font-weight: 600; }
+  .worker .running { background: var(--ok); color: #05231a; }
+  .worker .paused  { background: var(--bad); color: #2b0808; }
+  /* queues */
+  .queue { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px dashed var(--line); }
+  .queue:last-child { border-bottom: 0; }
+  .queue .name { color: var(--muted); font-family: ui-monospace, monospace; font-size: 12px; }
+  .queue .count { font-weight: 700; min-width: 34px; text-align: right; }
+  .queue .count.nonzero { color: var(--warn); }
+  /* table */
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+  td { padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td.mono { font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--muted); }
+  .chip { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
+  .chip.sent { background: rgba(52,201,142,.15); color: var(--ok); }
+  .chip.failed { background: rgba(240,106,106,.15); color: var(--bad); }
+  .chip.cancelled { background: rgba(139,150,173,.2); color: var(--muted); }
+  .chip.retrying, .chip.processing { background: rgba(245,184,61,.15); color: var(--warn); }
+  .chip.queued, .chip.pending, .chip.scheduled { background: rgba(122,167,255,.15); color: var(--info); }
+  .err { color: var(--bad); font-size: 11px; }
+  /* clients */
+  .client { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 10px; background: var(--panel2); }
+  .client .who { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .msg { border-radius: 8px; padding: 7px 10px; margin-top: 6px; font-size: 12.5px; }
+  .msg .meta { color: var(--muted); font-size: 10.5px; margin-top: 3px; }
+  .msg.sms  { background: #123c2b; border-radius: 14px 14px 14px 4px; }
+  .msg.email{ background: #1c2a4a; border-left: 3px solid var(--info); }
+  .msg.push { background: #332512; border: 1px solid rgba(245,184,61,.35); }
+  .empty { color: var(--muted); font-style: italic; padding: 8px 0; }
+  #error-bar { display: none; background: rgba(240,106,106,.15); color: var(--bad); border: 1px solid var(--bad); border-radius: 6px; padding: 6px 10px; margin-bottom: 12px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Notifier — Testing Dashboard</h1>
+  <div class="worker">
+    <span id="worker-label" class="hint">worker: …</span>
+    <button id="worker-toggle" class="secondary" onclick="toggleWorker()">…</button>
+  </div>
+</header>
+<div id="error-bar"></div>
+
+<div class="layout">
+  <div class="stack">
+    <div class="panel">
+      <h2>Send</h2>
+      <label for="recipient">Recipient</label>
+      <input id="recipient" value="+905551234567"/>
+      <label for="channel">Channel</label>
+      <select id="channel" onchange="placeholderRecipient()">
+        <option value="sms">sms</option>
+        <option value="email">email</option>
+        <option value="push">push</option>
+      </select>
+      <label for="content">Content</label>
+      <textarea id="content">Hello from the dashboard!</textarea>
+      <label for="priority">Priority</label>
+      <select id="priority">
+        <option value="high">high</option>
+        <option value="normal" selected>normal</option>
+        <option value="low">low</option>
+      </select>
+      <div class="row">
+        <button onclick="sendBurst(1)">Send 1</button>
+        <button class="secondary" onclick="sendBurst(10)">Send 10</button>
+        <button class="secondary" onclick="sendBurst(100)">Send 100</button>
+      </div>
+      <p class="hint">Include <code>FAILME</code> in content to simulate a provider outage (retries), or <code>REJECTME</code> for a permanent rejection (DLQ).</p>
+      <p class="hint" id="send-result"></p>
+    </div>
+
+    <div class="panel">
+      <h2>Queues</h2>
+      <div id="queues"><p class="empty">loading…</p></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Recent notifications</h2>
+    <table>
+      <thead><tr><th>id</th><th>ch</th><th>prio</th><th>status</th><th>att</th><th>detail</th></tr></thead>
+      <tbody id="notifications"><tr><td colspan="6" class="empty">loading…</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h2>Clients — delivered messages</h2>
+    <div id="clients"><p class="empty">nothing delivered yet</p></div>
+  </div>
+</div>
+
+<script>
+const defaults = { sms: "+905551234567", email: "user@example.com", push: "device-token-1234" };
+let workerPaused = null;
+
+function showError(message) {
+  const bar = document.getElementById("error-bar");
+  bar.textContent = message;
+  bar.style.display = "block";
+}
+function clearError() { document.getElementById("error-bar").style.display = "none"; }
+
+function placeholderRecipient() {
+  document.getElementById("recipient").value = defaults[document.getElementById("channel").value];
+}
+
+async function api(path, options) {
+  const response = await fetch(path, options);
+  if (!response.ok) throw new Error(path + " -> " + response.status);
+  return response.json();
+}
+
+async function sendBurst(count) {
+  const payload = {
+    recipient: document.getElementById("recipient").value,
+    channel: document.getElementById("channel").value,
+    content: document.getElementById("content").value,
+    priority: document.getElementById("priority").value,
+  };
+  const result = document.getElementById("send-result");
+  result.textContent = "sending " + count + "…";
+  let accepted = 0, rejected = 0;
+  for (let i = 0; i < count; i++) {
+    const body = count === 1 ? payload : { ...payload, content: payload.content + " #" + (i + 1) };
+    try {
+      const response = await fetch("/api/v1/notifications", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      response.status === 201 ? accepted++ : rejected++;
+    } catch { rejected++; }
+  }
+  result.textContent = "accepted " + accepted + (rejected ? ", rejected " + rejected : "");
+  refresh();
+}
+
+async function toggleWorker() {
+  if (workerPaused === null) return;
+  try {
+    const state = await api("/api/v1/worker", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paused: !workerPaused }),
+    });
+    renderWorker(state.paused);
+  } catch (err) { showError("worker toggle failed: " + err.message); }
+}
+
+function renderWorker(paused) {
+  workerPaused = paused;
+  const toggle = document.getElementById("worker-toggle");
+  toggle.textContent = paused ? "PAUSED — resume" : "RUNNING — pause";
+  toggle.className = paused ? "paused" : "running";
+  document.getElementById("worker-label").textContent =
+    paused ? "consumers unsubscribed; messages wait in queues" : "worker consuming";
+}
+
+function renderQueues(queues) {
+  document.getElementById("queues").innerHTML = queues.map(queue =>
+    `<div class="queue"><span class="name">${queue.name}</span>` +
+    `<span class="count ${queue.ready > 0 ? "nonzero" : ""}">${queue.ready}</span></div>`
+  ).join("");
+}
+
+function escapeHTML(raw) {
+  return raw.replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+}
+
+function renderNotifications(rows) {
+  const body = document.getElementById("notifications");
+  if (!rows.length) { body.innerHTML = '<tr><td colspan="6" class="empty">none yet</td></tr>'; return; }
+  body.innerHTML = rows.map(n => {
+    const detail = n.last_error
+      ? `<span class="err">${escapeHTML(n.last_error.slice(0, 80))}</span>`
+      : escapeHTML(n.content.slice(0, 40));
+    return `<tr><td class="mono">${n.id.slice(0, 8)}</td><td>${n.channel}</td><td>${n.priority}</td>` +
+      `<td><span class="chip ${n.status}">${n.status}</span></td><td>${n.attempts}</td><td>${detail}</td></tr>`;
+  }).join("");
+}
+
+function renderClients(messages) {
+  const container = document.getElementById("clients");
+  if (!messages.length) { container.innerHTML = '<p class="empty">nothing delivered yet</p>'; return; }
+  const byRecipient = new Map();
+  for (const message of messages) {
+    if (!byRecipient.has(message.to)) byRecipient.set(message.to, []);
+    byRecipient.get(message.to).push(message);
+  }
+  container.innerHTML = [...byRecipient.entries()].map(([recipient, inbox]) =>
+    `<div class="client"><div class="who">📥 ${escapeHTML(recipient)} · ${inbox.length}</div>` +
+    inbox.slice(0, 8).map(message =>
+      `<div class="msg ${message.channel}">${escapeHTML(message.content)}` +
+      `<div class="meta">${message.channel} · ${new Date(message.received_at).toLocaleTimeString()} · ${message.message_id.slice(0, 8)}</div></div>`
+    ).join("") + `</div>`
+  ).join("");
+}
+
+async function refresh() {
+  try {
+    const [worker, queues, notifications, provider] = await Promise.all([
+      api("/api/v1/worker"),
+      api("/api/v1/queues"),
+      api("/api/v1/notifications?limit=50"),
+      api("/api/v1/provider/messages"),
+    ]);
+    renderWorker(worker.paused);
+    renderQueues(queues.queues);
+    renderNotifications(notifications.data || []);
+    renderClients(provider.messages || []);
+    clearError();
+  } catch (err) { showError("refresh failed: " + err.message); }
+}
+
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>

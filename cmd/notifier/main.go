@@ -17,6 +17,7 @@ import (
 	"notifier/internal/api"
 	"notifier/internal/config"
 	"notifier/internal/delivery"
+	"notifier/internal/mockprovider"
 	"notifier/internal/observability"
 	"notifier/internal/queue/rabbit"
 	"notifier/internal/service"
@@ -106,10 +107,17 @@ func run() error {
 	if runsAPI {
 		notifications := service.NewNotificationService(repository, publisher, realClock{}, logger)
 		router := api.NewRouter(api.RouterConfig{
-			Logger:         logger,
-			RequestTimeout: requestTimeout,
-			Notifications:  notifications,
+			Logger:           logger,
+			RequestTimeout:   requestTimeout,
+			Notifications:    notifications,
+			DashboardEnabled: cfg.DashboardEnabled,
+			WorkerControl:    repository,
+			Queues:           rabbit.NewInspector(rabbitConn),
+			ProviderStore:    mockprovider.NewStore(),
 		})
+		if cfg.DashboardEnabled {
+			logger.Info("testing dashboard enabled", slog.String("path", "/dashboard"))
+		}
 		httpServer = &http.Server{Addr: fmt.Sprintf(":%d", cfg.HTTPPort), Handler: router}
 
 		componentGroup.Add(1)

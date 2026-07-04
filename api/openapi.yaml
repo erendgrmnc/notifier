@@ -60,6 +60,41 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+    get:
+      tags: [notifications]
+      summary: List recent notifications
+      description: Newest first. Filtering and cursor pagination arrive in a later release.
+      operationId: listNotifications
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Max results (1-100, default 50).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        '200':
+          description: Recent notifications.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Notification'
+        '400':
+          description: limit is not a positive integer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/notifications/{id}:
     get:
       tags: [notifications]
@@ -105,6 +140,134 @@ paths:
       responses:
         '200':
           description: Process is alive.
+
+  /api/v1/queues:
+    get:
+      tags: [system]
+      summary: Queue depths
+      description: Ready-message counts for work queues, retry tiers, and the DLQ. Mounted only when DASHBOARD_ENABLED.
+      operationId: queueDepths
+      responses:
+        '200':
+          description: Per-queue ready counts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  queues:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        ready: { type: integer }
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/worker:
+    get:
+      tags: [system]
+      summary: Worker pause state
+      description: Mounted only when DASHBOARD_ENABLED.
+      operationId: getWorkerState
+      responses:
+        '200':
+          description: Current pause state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkerState'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [system]
+      summary: Pause or resume the worker
+      description: Paused workers cancel their queue subscriptions; messages accumulate as ready. Mounted only when DASHBOARD_ENABLED.
+      operationId: setWorkerState
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkerState'
+      responses:
+        '200':
+          description: Applied state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkerState'
+        '400':
+          description: Malformed body.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /provider/messages:
+    post:
+      tags: [system]
+      summary: Built-in mock provider intake
+      description: |
+        Testing stand-in for the external provider; the worker's default
+        PROVIDER_URL in docker compose points here. Content containing
+        FAILME returns 500 (retryable); REJECTME returns 400 (permanent).
+        Mounted only when DASHBOARD_ENABLED.
+      operationId: providerReceive
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, channel, content]
+              properties:
+                to: { type: string }
+                channel: { type: string }
+                content: { type: string }
+      responses:
+        '202':
+          description: Accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messageId: { type: string }
+                  status: { type: string, example: accepted }
+                  timestamp: { type: string, format: date-time }
+        '400':
+          description: Malformed request or simulated permanent rejection.
+        '500':
+          description: Simulated provider outage.
+
+  /api/v1/provider/messages:
+    get:
+      tags: [system]
+      summary: Messages the mock provider received
+      description: Newest first, memory-bounded. Mounted only when DASHBOARD_ENABLED.
+      operationId: providerMessages
+      responses:
+        '200':
+          description: Received deliveries.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        message_id: { type: string }
+                        to: { type: string }
+                        channel: { type: string }
+                        content: { type: string }
+                        received_at: { type: string, format: date-time }
 
 components:
   responses:
@@ -212,6 +375,13 @@ components:
         sent_at:
           type: string
           format: date-time
+
+    WorkerState:
+      type: object
+      required: [paused]
+      properties:
+        paused:
+          type: boolean
 
     FieldError:
       type: object

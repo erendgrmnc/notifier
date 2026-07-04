@@ -43,6 +43,9 @@ type Config struct {
 	ProviderURL         string
 	ProviderTimeout     time.Duration
 	MaxDeliveryAttempts int
+	// DashboardEnabled mounts the testing dashboard, worker controls,
+	// queue inspection, and the built-in mock provider.
+	DashboardEnabled bool
 }
 
 // LookupFunc returns the value of an environment variable, or "" if unset.
@@ -99,6 +102,9 @@ func Load(lookup LookupFunc) (Config, error) {
 	if err := parseInt(lookup, "MAX_DELIVERY_ATTEMPTS", &cfg.MaxDeliveryAttempts); err != nil {
 		return Config{}, err
 	}
+	if err := parseBool(lookup, "DASHBOARD_ENABLED", &cfg.DashboardEnabled); err != nil {
+		return Config{}, err
+	}
 
 	return cfg, nil
 }
@@ -109,6 +115,19 @@ func parseInt(lookup LookupFunc, key string, target *int) error {
 		return nil
 	}
 	parsed, err := strconv.Atoi(raw)
+	if err != nil {
+		return fmt.Errorf("parse %s: %w", key, err)
+	}
+	*target = parsed
+	return nil
+}
+
+func parseBool(lookup LookupFunc, key string, target *bool) error {
+	raw := lookup(key)
+	if raw == "" {
+		return nil
+	}
+	parsed, err := strconv.ParseBool(raw)
 	if err != nil {
 		return fmt.Errorf("parse %s: %w", key, err)
 	}
