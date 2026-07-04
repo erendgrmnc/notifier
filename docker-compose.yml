@@ -49,7 +49,9 @@ services:
       rabbitmq:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081/healthz"]
+      # GNU wget's --spider sends HEAD, which GET-only routes reject; a
+      # plain GET discarded to /dev/null works everywhere.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8081/healthz"]
       interval: 5s
       timeout: 3s
       retries: 10
