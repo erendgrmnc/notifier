@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/time/rate"
 
 	"notifier/internal/delivery"
 	"notifier/internal/domain"
@@ -62,10 +63,20 @@ type Worker struct {
 	clock       Clock
 	logger      *slog.Logger
 	maxAttempts int
-	lastPaused  atomic.Bool
+	concurrency int
+	// limiters throttle deliveries per channel. One limiter is shared by
+	// all of a channel's handler goroutines, so the per-channel cap holds
+	// regardless of concurrency. With N worker processes the effective
+	// cap is N× the configured rate (documented in config).
+	limiters   map[domain.Channel]*rate.Limiter
+	lastPaused atomic.Bool
 }
 
-func New(repo Repository, sender Sender, publisher Publisher, pause PauseChecker, clock Clock, logger *slog.Logger, maxAttempts int) *Worker {
+func New(repo Repository, sender Sender, publisher Publisher, pause PauseChecker, clock Clock, logger *slog.Logger, maxAttempts, ratePerChannel, concurrency int) *Worker {
+	limiters := make(map[domain.Channel]*rate.Limiter, len(domain.Channels()))
+	for _, deliveryChannel := range domain.Channels() {
+		limiters[deliveryChannel] = rate.NewLimiter(rate.Limit(ratePerChannel), ratePerChannel)
+	}
 	return &Worker{
 		repo:        repo,
 		sender:      sender,
@@ -74,6 +85,8 @@ func New(repo Repository, sender Sender, publisher Publisher, pause PauseChecker
 		clock:       clock,
 		logger:      logger,
 		maxAttempts: maxAttempts,
+		concurrency: concurrency,
+		limiters:    limiters,
 	}
 }
 
@@ -103,6 +116,20 @@ func (worker *Worker) processNotification(ctx context.Context, id uuid.UUID) err
 		default:
 			return fmt.Errorf("claim notification: %w", err)
 		}
+	}
+
+	// Throttle before the provider call. Waiting after the claim is safe:
+	// the row sits in processing and redelivery is guarded anyway.
+	if err := worker.limiters[claimed.Channel].Wait(ctx); err != nil {
+		// Shutdown while throttled: nothing was sent, so release the
+		// claim back to retrying (on a detached context) and requeue the
+		// message — the redelivered message re-claims from retrying.
+		releaseCtx, cancelRelease := context.WithTimeout(context.WithoutCancel(ctx), outcomeWriteTimeout)
+		defer cancelRelease()
+		if releaseErr := worker.repo.MarkRetrying(releaseCtx, claimed.ID, "shutdown while rate limited"); releaseErr != nil {
+			logger.Error("release throttled claim failed", slog.Any("error", releaseErr))
+		}
+		return fmt.Errorf("rate limit wait: %w", err)
 	}
 
 	providerMessageID, sendErr := worker.sender.Send(ctx, claimed)

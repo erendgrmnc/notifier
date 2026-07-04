@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/time/rate"
 
 	"notifier/internal/delivery"
 	"notifier/internal/domain"
@@ -128,11 +129,63 @@ func (clock fixedClock) Now() time.Time { return clock.now }
 
 var testNow = time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
 
-const testMaxAttempts = 4
+const (
+	testMaxAttempts = 4
+	// testRateLimit is high enough that ordinary tests never throttle.
+	testRateLimit   = 10000
+	testConcurrency = 2
+)
 
 func newTestWorker(repo *fakeRepository, sender *fakeSender, publisher *fakePublisher) *Worker {
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
-	return New(repo, sender, publisher, &fakePauseChecker{}, fixedClock{now: testNow}, logger, testMaxAttempts)
+	return New(repo, sender, publisher, &fakePauseChecker{}, fixedClock{now: testNow}, logger,
+		testMaxAttempts, testRateLimit, testConcurrency)
+}
+
+func TestRateLimiterThrottlesDeliveries(t *testing.T) {
+	repo := newFakeRepository()
+	sender := &fakeSender{}
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	// 20/s with burst 20... too permissive to observe; use a limiter of
+	// 20/s but burst 1 by constructing then draining the initial burst.
+	queueWorker := New(repo, sender, &fakePublisher{}, &fakePauseChecker{}, fixedClock{now: testNow}, logger,
+		testMaxAttempts, 20, testConcurrency)
+	// Drain the initial burst allowance so subsequent sends pay full price.
+	limiter := queueWorker.limiters[domain.ChannelSMS]
+	_ = limiter.ReserveN(time.Now(), 20)
+
+	const sends = 4 // 4 sends at 20/s after burst drain ≈ ≥150ms
+	started := time.Now()
+	for i := 0; i < sends; i++ {
+		notification := seedNotification(repo, domain.StatusQueued, 0)
+		if err := queueWorker.processNotification(context.Background(), notification.ID); err != nil {
+			t.Fatalf("processNotification: %v", err)
+		}
+	}
+	elapsed := time.Since(started)
+
+	// Coarse lower bound to avoid flakes: 4 tokens at 20/s ≥ 150ms.
+	if elapsed < 150*time.Millisecond {
+		t.Errorf("4 throttled sends finished in %v, want ≥150ms", elapsed)
+	}
+	if len(sender.sent) != sends {
+		t.Errorf("sent %d, want %d", len(sender.sent), sends)
+	}
+}
+
+func TestRateLimiterIsPerChannel(t *testing.T) {
+	queueWorker := newTestWorker(newFakeRepository(), &fakeSender{}, &fakePublisher{})
+	seen := map[*rate.Limiter]bool{}
+	for _, deliveryChannel := range domain.Channels() {
+		limiter := queueWorker.limiters[deliveryChannel]
+		if limiter == nil {
+			t.Fatalf("no limiter for channel %s", deliveryChannel)
+		}
+		if seen[limiter] {
+			t.Error("channels share a limiter; caps must be independent")
+		}
+		seen[limiter] = true
+	}
 }
 
 func TestIsPausedReflectsChecker(t *testing.T) {

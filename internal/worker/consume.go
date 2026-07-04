@@ -95,9 +95,12 @@ func (worker *Worker) waitWhilePaused(ctx context.Context, logger *slog.Logger) 
 	}
 }
 
-// consumeUntilPaused subscribes and processes deliveries until the pause
-// flag is set (returns nil after cancelling the subscription), the
-// context ends (nil), or the broker closes the channel (error).
+// consumeUntilPaused subscribes and processes deliveries concurrently
+// until the pause flag is set (returns nil after cancelling the
+// subscription), the context ends (nil), or the broker closes the
+// channel (error). A pool of handler goroutines shares the deliveries
+// channel; the per-channel rate limiter throttles them collectively, so
+// concurrency raises throughput up to the limit, never past it.
 func (worker *Worker) consumeUntilPaused(ctx context.Context, conn *amqp.Connection, queueName string, prefetch int, logger *slog.Logger) error {
 	amqpChannel, err := conn.Channel()
 	if err != nil {
@@ -123,34 +126,66 @@ func (worker *Worker) consumeUntilPaused(ctx context.Context, conn *amqp.Connect
 		return fmt.Errorf("consume %s: %w", queueName, err)
 	}
 
+	// Handler pool: exits when the broker closes the deliveries channel
+	// (after Cancel drains it, or on broker failure). In-flight handlers
+	// finish their current message before returning. poolDone lets the
+	// supervisor notice a broker-side closure it did not request.
+	var handlerGroup sync.WaitGroup
+	for i := 0; i < worker.concurrency; i++ {
+		handlerGroup.Add(1)
+		go func() {
+			defer handlerGroup.Done()
+			for delivery := range deliveries {
+				worker.handleDelivery(ctx, logger, delivery)
+			}
+		}()
+	}
+	poolDone := make(chan struct{})
+	go func() {
+		handlerGroup.Wait()
+		close(poolDone)
+	}()
+
+	// Supervisor: watches for pause and shutdown, cancelling the
+	// subscription so the handler pool drains and exits.
 	pauseTicker := time.NewTicker(pausePollInterval)
 	defer pauseTicker.Stop()
 	cancelRequested := false
 
+	cancelSubscription := func(reason string) {
+		if cancelRequested {
+			return
+		}
+		cancelRequested = true
+		logger.Info("cancelling subscription", slog.String("reason", reason))
+		// Cancel returns prefetched-but-unacked messages to the queue and
+		// closes the deliveries channel once in-flight ones are handed out.
+		if err := amqpChannel.Cancel(consumerTag, false); err != nil {
+			logger.Error("cancel consumer failed", slog.Any("error", err))
+		}
+	}
+
+supervise:
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Info("consumer stopping")
-			return nil
+			cancelSubscription("shutdown")
+			break supervise
+		case <-poolDone:
+			break supervise // broker closed deliveries underneath us
 		case <-pauseTicker.C:
-			if !cancelRequested && worker.isPaused(ctx) {
-				cancelRequested = true
-				// Cancel returns prefetched-but-unacked messages to the
-				// queue; the delivery channel closes once drained.
-				if err := amqpChannel.Cancel(consumerTag, false); err != nil {
-					return fmt.Errorf("cancel consumer for %s: %w", queueName, err)
-				}
+			if worker.isPaused(ctx) {
+				cancelSubscription("paused")
+				break supervise
 			}
-		case delivery, open := <-deliveries:
-			if !open {
-				if cancelRequested {
-					return nil // expected closure: paused
-				}
-				return fmt.Errorf("delivery channel for %s closed by broker", queueName)
-			}
-			worker.handleDelivery(ctx, logger, delivery)
 		}
 	}
+
+	<-poolDone
+	if !cancelRequested {
+		return fmt.Errorf("delivery channel for %s closed by broker", queueName)
+	}
+	return nil
 }
 
 // isPaused checks the shared pause flag, keeping the last known state
