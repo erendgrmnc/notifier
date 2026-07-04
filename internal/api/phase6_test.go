@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -165,7 +166,8 @@ func TestListRejectsMalformedParams(t *testing.T) {
 	router := newRouterWithService(newFakeNotificationService())
 
 	for _, path := range []string{
-		"/api/v1/notifications?cursor=%%%",
+		"/api/v1/notifications?cursor=not!valid!base64",
+		"/api/v1/notifications?cursor=" + encodeCursorRaw(`{"broken`),
 		"/api/v1/notifications?batch_id=nope",
 		"/api/v1/notifications?from=yesterday",
 	} {
@@ -175,6 +177,11 @@ func TestListRejectsMalformedParams(t *testing.T) {
 			t.Errorf("GET %s = %d, want 400", path, recorder.Code)
 		}
 	}
+}
+
+// encodeCursorRaw base64-encodes arbitrary bytes as a cursor would be.
+func encodeCursorRaw(raw string) string {
+	return base64.URLEncoding.EncodeToString([]byte(raw))
 }
 
 func TestCursorRoundTrip(t *testing.T) {
