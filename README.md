@@ -200,9 +200,15 @@ Everything is environment-driven (defaults in parentheses):
 ## Testing
 
 ```bash
-make test          # unit tests with -race (CI runs the same)
-./scripts/test.sh  # full matrix: vet, unit, coverage, race, live e2e checks
+make test            # unit tests with -race (CI runs the same)
+go test -race ./...  # the same, without make
+./scripts/test.sh    # full matrix: vet, unit, coverage, race, live e2e checks
+scripts\test.bat     # Windows twin of the full matrix
 ```
+
+The `-race` flag needs a C toolchain (gcc). On machines without one
+(common on Windows), run `go test ./...`; CI always runs the race
+detector.
 
 Tests are table-driven with hand-written fakes. They cover the state
 machine, validation, retry policy, rate limiting, idempotent replay,
@@ -217,14 +223,17 @@ on every push.
 
 ## Development
 
+The Makefile is a thin index of entry points; every target has a direct
+equivalent, so `make` itself is optional:
+
 ```bash
-make up      # start the stack
-make run     # run api+worker locally against it
-make lint    # gofmt + vet + golangci-lint
-make deploy  # build image + roll local stack
+make up      # docker compose up -d postgres rabbitmq
+make run     # go run ./cmd/notifier
+make lint    # gofmt -l . && go vet ./... && golangci-lint run
+make deploy  # ./scripts/deploy.sh local   (Windows: scripts\deploy.bat local)
 ```
 
-Deploy and test scripts have Windows twins (`scripts/*.bat`). The
-dashboard, OpenAPI spec, and migrations are embedded in the binary, so
-the compose image is self-contained. Editable diagram sources are in
-`docs/*.drawio` (open with diagrams.net).
+Deploy and test scripts have Windows twins (`scripts/*.bat`) and work
+from any directory. The dashboard, OpenAPI spec, and migrations are
+embedded in the binary, so the compose image is self-contained. Editable
+diagram sources are in `docs/*.drawio` (open with diagrams.net).
