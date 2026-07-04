@@ -229,6 +229,23 @@
     text-transform: uppercase; margin: 9px 0 3px; }
   .metric-group:first-child { margin-top: 0; }
 
+  /* ---- live stream panel ---- */
+  .ws-row { display: flex; gap: 7px; align-items: center; font: 11px var(--mono);
+    padding: 3px 0; border-bottom: 1px dashed rgba(38,50,82,.5); }
+  .ws-row .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--dim); }
+  .ws-row .dot.live { background: var(--ok); box-shadow: 0 0 6px rgba(61,220,151,.6); }
+  .ws-row .dot.connecting { background: var(--signal); }
+  .ws-row .name { font-weight: 600; }
+  .ws-row .detail { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+  .ws-row button { font: 600 9.5px var(--mono); background: transparent; color: var(--dim);
+    border: 1px solid var(--edge); border-radius: 4px; padding: 1px 7px; cursor: pointer; flex-shrink: 0; }
+  .ws-row button:hover { color: var(--paper); border-color: var(--dim); }
+  .event-row { display: flex; gap: 8px; align-items: baseline; font: 10.5px var(--mono);
+    padding: 2px 0; border-bottom: 1px solid rgba(38,50,82,.35); }
+  .event-row .t { color: var(--dim); flex-shrink: 0; }
+  .event-row .via { color: var(--info); flex-shrink: 0; }
+  .event-row .nid { color: var(--dim); flex-shrink: 0; }
+
   /* ---- wire log ---- */
   .wire-panel > h2 button { margin-left: auto; font: 600 10px var(--mono); letter-spacing: .08em;
     background: transparent; color: var(--dim); border: 1px solid var(--edge); border-radius: 4px;
@@ -369,6 +386,17 @@
       </div>
       <p class="hint"><code>FAILME</code> in content simulates a provider outage (retries); <code>REJECTME</code> a permanent rejection (dead letter).</p>
       <p class="hint" id="send-result"></p>
+    </div>
+    <div class="panel">
+      <h2>Live stream — /ws</h2>
+      <div id="ws-connections"></div>
+      <div class="row">
+        <input id="ws-filter" placeholder="notification id (optional filter)" style="flex:1"/>
+        <button onclick="addWsFromInput()">Connect</button>
+      </div>
+      <div id="ws-feed" class="scroll" style="max-height:130px;margin-top:8px">
+        <p class="empty">status events appear here as they happen</p>
+      </div>
     </div>
     <div class="panel fill">
       <h2>Templates</h2>
@@ -1184,10 +1212,9 @@ async function refresh() {
   } catch (err) { showError("refresh failed: " + err.message); }
 }
 
-/* ---------- live event stream ---------- */
+/* ---------- live event stream: connection manager ---------- */
 // Events trigger an immediate (debounced) refresh, so the panels react
 // the moment the worker flips a status instead of waiting for the poll.
-let wsEventCount = 0;
 let refreshQueued = false;
 
 function scheduleInstantRefresh() {
@@ -1196,32 +1223,156 @@ function scheduleInstantRefresh() {
   setTimeout(() => { refreshQueued = false; refresh(); }, 150);
 }
 
-function connectEventStream(attempt = 0) {
-  const indicator = document.getElementById("strip-live");
-  const socket = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+const wsConnections = [];
+const wsEvents = [];
+const WS_FEED_CAP = 30;
+let wsCounter = 0;
+let totalWsEvents = 0;
 
-  socket.onopen = () => {
-    indicator.textContent = "● live";
-    indicator.className = "strip-item live";
-    attempt = 0;
+function wsURL(filter) {
+  const base = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws";
+  return filter ? base + "?id=" + encodeURIComponent(filter) : base;
+}
+
+function addWsConnection(filter, isMain) {
+  wsCounter++;
+  const conn = {
+    id: wsCounter,
+    label: isMain ? "main" : "ws-" + wsCounter,
+    filter: filter || "",
+    socket: null,
+    status: "closed",
+    events: 0,
+    stopped: false,
+    isMain: !!isMain,
   };
-  socket.onmessage = () => {
-    wsEventCount++;
-    indicator.textContent = "● live · " + wsEventCount;
+  wsConnections.push(conn);
+  startWs(conn);
+  return conn;
+}
+
+function startWs(conn, attempt = 0) {
+  if (conn.socket && conn.socket.readyState <= 1) return; // connecting or open
+  conn.status = "connecting";
+  renderWsPanel();
+
+  const socket = new WebSocket(wsURL(conn.filter));
+  conn.socket = socket;
+
+  socket.onopen = () => { conn.status = "live"; updateLiveIndicator(); renderWsPanel(); };
+  socket.onmessage = message => {
+    conn.events++;
+    totalWsEvents++;
+    let event = {};
+    try { event = JSON.parse(message.data); } catch { /* feed shows raw-less row */ }
+    wsEvents.unshift({ time: new Date(), via: conn.label, event });
+    if (wsEvents.length > WS_FEED_CAP) wsEvents.length = WS_FEED_CAP;
+    updateLiveIndicator();
+    renderWsPanel();
     scheduleInstantRefresh();
   };
   socket.onclose = () => {
+    conn.status = "closed";
+    updateLiveIndicator();
+    renderWsPanel();
+    // The main connection self-heals; manual connections stay down
+    // until their start button is pressed.
+    if (conn.isMain && !conn.stopped) {
+      const backoffMs = Math.min(15000, 1000 * 2 ** attempt);
+      setTimeout(() => { if (!conn.stopped) startWs(conn, attempt + 1); }, backoffMs);
+    }
+  };
+}
+
+function findWs(id) { return wsConnections.find(conn => conn.id === id); }
+
+function stopWs(id) {
+  const conn = findWs(id);
+  if (!conn) return;
+  conn.stopped = true;
+  if (conn.socket) conn.socket.close();
+}
+
+function resumeWs(id) {
+  const conn = findWs(id);
+  if (!conn) return;
+  conn.stopped = false;
+  startWs(conn);
+}
+
+function removeWs(id) {
+  const conn = findWs(id);
+  if (!conn || conn.isMain) return;
+  conn.stopped = true;
+  if (conn.socket) conn.socket.close();
+  wsConnections.splice(wsConnections.indexOf(conn), 1);
+  renderWsPanel();
+}
+
+function addWsFromInput() {
+  const input = document.getElementById("ws-filter");
+  const filter = input.value.trim();
+  if (filter && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(filter)) {
+    input.value = "";
+    input.placeholder = "filter must be a notification UUID";
+    return;
+  }
+  input.value = "";
+  input.placeholder = "notification id (optional filter)";
+  addWsConnection(filter, false);
+}
+
+function updateLiveIndicator() {
+  const indicator = document.getElementById("strip-live");
+  const main = wsConnections.find(conn => conn.isMain);
+  if (main && main.status === "live") {
+    indicator.textContent = "● live · " + totalWsEvents;
+    indicator.className = "strip-item live";
+  } else {
     indicator.textContent = "○ polling";
     indicator.className = "strip-item";
-    const backoffMs = Math.min(15000, 1000 * 2 ** attempt);
-    setTimeout(() => connectEventStream(attempt + 1), backoffMs);
-  };
+  }
+}
+
+function renderWsPanel() {
+  document.getElementById("ws-connections").innerHTML = wsConnections.map(conn => {
+    const detail = conn.filter ? "id=" + conn.filter.slice(0, 8) + "…" : "all events";
+    const toggle = conn.status === "closed"
+      ? `<button onclick="resumeWs(${conn.id})">start</button>`
+      : `<button onclick="stopWs(${conn.id})">stop</button>`;
+    const remove = conn.isMain ? "" : `<button onclick="removeWs(${conn.id})" title="remove">×</button>`;
+    return `<div class="ws-row">
+      <span class="dot ${conn.status}"></span>
+      <span class="name">${conn.label}</span>
+      <span class="detail">${escapeHTML(detail)} · ${conn.events} ev</span>
+      ${toggle}${remove}
+    </div>`;
+  }).join("");
+
+  const feed = document.getElementById("ws-feed");
+  if (!wsEvents.length) {
+    feed.innerHTML = '<p class="empty">status events appear here as they happen</p>';
+    return;
+  }
+  feed.innerHTML = wsEvents.map(entry => {
+    const event = entry.event || {};
+    const nid = (event.notification_id || "").slice(0, 8);
+    const status = event.status || "?";
+    const attempts = event.attempts != null ? " att=" + event.attempts : "";
+    return `<div class="event-row">
+      <span class="t">${entry.time.toLocaleTimeString()}</span>
+      <span class="via">${escapeHTML(entry.via)}</span>
+      <span class="nid">${escapeHTML(nid)}</span>
+      <span class="chip ${escapeHTML(status)}">${escapeHTML(status)}</span>
+      <span class="t">${escapeHTML(event.channel || "")}${attempts}</span>
+    </div>`;
+  }).join("");
 }
 
 renderScenarios();
 refresh();
 refreshTemplates();
-connectEventStream();
+addWsConnection("", true);
 setInterval(refresh, 1000);
 setInterval(refreshTemplates, 5000);
 </script>
