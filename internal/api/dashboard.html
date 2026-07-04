@@ -142,6 +142,33 @@
   .msg.email { background: #1a2a4a; border-left: 3px solid var(--info); }
   .msg.push  { background: #33270f; border: 1px solid rgba(255,180,84,.3); }
   .empty { color: var(--dim); font-style: italic; font-size: 12px; padding: 6px 0; }
+
+  /* ---- wire log ---- */
+  .wire-panel { margin-top: 14px; }
+  .wire-panel > h2 button { margin-left: auto; font: 600 10px var(--mono); letter-spacing: .08em;
+    background: transparent; color: var(--dim); border: 1px solid var(--edge); border-radius: 4px;
+    padding: 2px 9px; cursor: pointer; text-transform: uppercase; }
+  .wire-panel > h2 button:hover { color: var(--paper); border-color: var(--dim); }
+  .wire-panel > h2::after { content: none; }
+  .wire-panel > h2 .rule { flex: 1; height: 1px; background: var(--edge); }
+  #wire { font: 11.5px var(--mono); max-height: 230px; overflow-y: auto; }
+  .wire-line { display: flex; gap: 10px; align-items: baseline; padding: 2.5px 0;
+    border-bottom: 1px solid rgba(38,50,82,.35); }
+  .wire-line .t { color: var(--dim); font-size: 10px; flex: 0 0 62px; }
+  .wire-line .m { flex: 0 0 44px; font-weight: 700; }
+  .wire-line .m.get { color: var(--dim); }
+  .wire-line .m.post { color: var(--signal); }
+  .wire-line .m.put { color: var(--info); }
+  .wire-line .p { color: var(--paper); }
+  .wire-line .c { font-weight: 700; }
+  .wire-line .c.ok { color: var(--ok); }
+  .wire-line .c.warn { color: var(--signal); }
+  .wire-line .c.bad { color: var(--fail); }
+  .wire-line .body { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .wire-line .x { color: var(--dim); font-size: 10px; }
+  .wire-divider { color: var(--signal); font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase;
+    padding: 6px 0 3px; }
+  .wire-divider::before { content: "── "; color: var(--edge); }
 </style>
 </head>
 <body>
@@ -213,6 +240,11 @@
   </div>
 </div>
 
+<div class="panel wire-panel">
+  <h2>Wire — API calls <span class="rule"></span><button onclick="clearWire()">Clear</button></h2>
+  <div id="wire"><p class="empty">actions and scenario steps appear here as requests; background polling is not shown</p></div>
+</div>
+
 <script>
 "use strict";
 const defaults = { sms: "+905551234567", email: "user@example.com", push: "device-token-1234" };
@@ -231,19 +263,98 @@ function placeholderRecipient() {
 function escapeHTML(raw) {
   return String(raw).replace(/[&<>"']/g, ch => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[ch]));
 }
-async function api(path, options) {
+async function api(path, options, silent) {
+  const method = (options && options.method) || "GET";
   const response = await fetch(path, options);
   const body = await response.json().catch(() => ({}));
+  if (!silent) recordWire(method, path, options && options.body, response.status, body);
   return { status: response.status, body };
 }
-async function apiOK(path, options) {
-  const { status, body } = await api(path, options);
+async function apiOK(path, options, silent) {
+  const { status, body } = await api(path, options, silent);
   if (status < 200 || status >= 300) throw new Error(path + " -> " + status);
   return body;
 }
 const post = (path, payload) => api(path, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
 });
+
+/* ---------- wire log ---------- */
+const wireEntries = [];
+const WIRE_CAP = 80;
+
+// pick the fields humans track scenarios by, not whole payloads
+function wirePreview(raw) {
+  if (!raw) return "";
+  let parsed = raw;
+  if (typeof raw === "string") { try { parsed = JSON.parse(raw); } catch { return String(raw).slice(0, 70); } }
+  const interesting = {};
+  for (const field of ["id", "status", "idempotency_key", "priority", "scheduled_at", "paused",
+                       "accepted", "rejected", "batch_id", "attempts", "last_error", "existing_id"]) {
+    if (parsed && parsed[field] !== undefined && parsed[field] !== null && parsed[field] !== "") {
+      interesting[field] = parsed[field];
+    }
+  }
+  if (parsed && Array.isArray(parsed.notifications)) interesting.items = parsed.notifications.length;
+  if (parsed && Array.isArray(parsed.results)) interesting.results = parsed.results.map(r => r.status).join(",");
+  if (parsed && parsed.content) interesting.content = String(parsed.content).slice(0, 24);
+  const parts = Object.entries(interesting).map(([key, value]) => {
+    let shown = String(value);
+    if ((key === "id" || key === "existing_id" || key === "batch_id") && shown.length > 8) shown = shown.slice(0, 8);
+    return key + "=" + shown;
+  });
+  return parts.join(" ").slice(0, 110);
+}
+
+function recordWire(method, path, requestBody, status, responseBody) {
+  const shortPath = path.replace(/^\/api\/v1/, "").replace(/([0-9a-f]{8})[0-9a-f-]{28}/g, "$1…");
+  const last = wireEntries[wireEntries.length - 1];
+  // Coalesce repeats (drain polls, bursts): same method+path+status → ×N.
+  if (last && !last.divider && last.method === method && last.path === shortPath && last.status === status) {
+    last.count++;
+    last.response = wirePreview(responseBody);
+    last.time = new Date();
+  } else {
+    wireEntries.push({
+      method, path: shortPath, status,
+      request: wirePreview(requestBody), response: wirePreview(responseBody),
+      count: 1, time: new Date(),
+    });
+    if (wireEntries.length > WIRE_CAP) wireEntries.splice(0, wireEntries.length - WIRE_CAP);
+  }
+  renderWire();
+}
+
+function wireDivider(label) {
+  wireEntries.push({ divider: label, time: new Date() });
+  if (wireEntries.length > WIRE_CAP) wireEntries.splice(0, wireEntries.length - WIRE_CAP);
+  renderWire();
+}
+
+function clearWire() { wireEntries.length = 0; renderWire(); }
+
+function renderWire() {
+  const container = document.getElementById("wire");
+  if (!wireEntries.length) {
+    container.innerHTML = '<p class="empty">actions and scenario steps appear here as requests; background polling is not shown</p>';
+    return;
+  }
+  const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
+  container.innerHTML = wireEntries.map(entry => {
+    if (entry.divider) return `<div class="wire-divider">${escapeHTML(entry.divider)}</div>`;
+    const statusClass = entry.status < 300 ? "ok" : entry.status < 500 ? "warn" : "bad";
+    const summary = [entry.request, entry.response].filter(Boolean).join(" → ");
+    return `<div class="wire-line">
+      <span class="t">${entry.time.toLocaleTimeString()}</span>
+      <span class="m ${entry.method.toLowerCase()}">${entry.method}</span>
+      <span class="p">${escapeHTML(entry.path)}</span>
+      <span class="c ${statusClass}">${entry.status}</span>
+      ${entry.count > 1 ? `<span class="x">×${entry.count}</span>` : ""}
+      <span class="body">${escapeHTML(summary)}</span>
+    </div>`;
+  }).join("");
+  if (nearBottom) container.scrollTop = container.scrollHeight;
+}
 function expect(condition, message) { if (!condition) throw new Error(message); }
 async function pollUntil(check, timeoutMs, every = 400) {
   const deadline = Date.now() + timeoutMs;
@@ -528,6 +639,7 @@ async function runScenario(id) {
   };
 
   const started = Date.now();
+  wireDivider("scenario: " + scenario.title);
   try {
     await scenario.run(step);
     verdict.className = "verdict pass"; verdict.textContent = "PASS";
@@ -535,6 +647,7 @@ async function runScenario(id) {
     verdict.className = "verdict fail"; verdict.textContent = "FAIL";
   } finally {
     took.textContent = ((Date.now() - started) / 1000).toFixed(1) + "s";
+    wireDivider(scenario.title + " → " + verdict.textContent);
     busy = false;
     setControlsDisabled(false);
     refresh();
@@ -655,11 +768,12 @@ function renderClients(messages) {
 
 async function refresh() {
   try {
+    // Background polling is silent on the wire log by design.
     const [worker, queues, notifications, provider] = await Promise.all([
-      apiOK("/api/v1/worker"),
-      apiOK("/api/v1/queues"),
-      apiOK("/api/v1/notifications?limit=20"),
-      apiOK("/api/v1/provider/messages"),
+      apiOK("/api/v1/worker", undefined, true),
+      apiOK("/api/v1/queues", undefined, true),
+      apiOK("/api/v1/notifications?limit=20", undefined, true),
+      apiOK("/api/v1/provider/messages", undefined, true),
     ]);
     renderWorker(worker.paused);
     renderQueues(queues.queues);
