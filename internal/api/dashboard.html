@@ -266,7 +266,8 @@
   .event-row .nid { color: var(--dim); flex-shrink: 0; }
   .event-row-wrap { border-bottom: 1px solid rgba(38,50,82,.35); }
   .provider-response { font: 10px var(--mono); color: var(--ok); opacity: .85;
-    padding: 0 0 3px 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    padding: 0 0 3px 16px; white-space: normal; overflow-wrap: anywhere; }
+  .provider-response .code { font-weight: 700; }
 
   /* ---- wire log ---- */
   .wire-panel > h2 button { margin-left: auto; font: 600 10px var(--mono); letter-spacing: .08em;
@@ -1536,9 +1537,10 @@ function renderWsPanel() {
     const nid = (event.notification_id || "").slice(0, 8);
     const status = event.status || "?";
     const attempts = event.attempts != null ? " att=" + event.attempts : "";
-    // Sent events carry the provider's actual response body.
+    // Sent events carry the provider's actual response body and code.
+    const providerCode = event.provider_status_code ? `<span class="code">${event.provider_status_code}</span> ` : "";
     const providerLine = event.provider_response
-      ? `<div class="provider-response" title="provider response">↩ ${escapeHTML(event.provider_response)}</div>`
+      ? `<div class="provider-response" title="provider response">↩ ${providerCode}${escapeHTML(event.provider_response)}</div>`
       : "";
     return `<div class="event-row-wrap"><div class="event-row">
       <span class="t">${entry.time.toLocaleTimeString()}</span>

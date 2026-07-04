@@ -257,8 +257,12 @@ func TestProcessDeliversQueuedNotification(t *testing.T) {
 	if stored.Attempts != 1 {
 		t.Errorf("attempts = %d, want 1", stored.Attempts)
 	}
-	if publisher := queueWorker.publisher.(*fakePublisher); len(publisher.events) != 1 || publisher.events[0].Status != "sent" {
+	publisher := queueWorker.publisher.(*fakePublisher)
+	if len(publisher.events) != 1 || publisher.events[0].Status != "sent" {
 		t.Errorf("events = %+v, want one sent event", publisher.events)
+	}
+	if sent := publisher.events[0]; sent.ProviderStatusCode != 202 || sent.ProviderResponse == "" {
+		t.Errorf("sent event provider fields = %d/%q, want 202 with response body", sent.ProviderStatusCode, sent.ProviderResponse)
 	}
 	if stored.ProviderMessageID == nil || *stored.ProviderMessageID != "provider-msg-1" {
 		t.Errorf("provider_message_id = %v, want provider-msg-1", stored.ProviderMessageID)

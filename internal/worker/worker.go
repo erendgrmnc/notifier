@@ -133,13 +133,14 @@ func (worker *Worker) emitEvent(ctx context.Context, logger *slog.Logger, notifi
 // the provider answered so live listeners can display the real response.
 func (worker *Worker) emitSentEvent(ctx context.Context, logger *slog.Logger, notification domain.Notification, sendResult delivery.Result) {
 	event := rabbit.StatusEvent{
-		NotificationID:    notification.ID,
-		Status:            string(domain.StatusSent),
-		Channel:           string(notification.Channel),
-		Attempts:          notification.Attempts,
-		ProviderMessageID: sendResult.ProviderMessageID,
-		ProviderResponse:  sendResult.Body,
-		OccurredAt:        worker.clock.Now(),
+		NotificationID:     notification.ID,
+		Status:             string(domain.StatusSent),
+		Channel:            string(notification.Channel),
+		Attempts:           notification.Attempts,
+		ProviderMessageID:  sendResult.ProviderMessageID,
+		ProviderStatusCode: sendResult.StatusCode,
+		ProviderResponse:   sendResult.Body,
+		OccurredAt:         worker.clock.Now(),
 	}
 	if err := worker.publisher.PublishEvent(ctx, event); err != nil {
 		logger.Warn("status event publish failed", slog.Any("error", err))

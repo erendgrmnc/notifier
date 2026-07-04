@@ -30,7 +30,8 @@ type StatusEvent struct {
 	LastError      string    `json:"last_error,omitempty"`
 	// Provider fields are set on sent events so live listeners can show
 	// exactly what the provider answered.
-	ProviderMessageID string    `json:"provider_message_id,omitempty"`
-	ProviderResponse  string    `json:"provider_response,omitempty"`
-	OccurredAt        time.Time `json:"occurred_at"`
+	ProviderMessageID  string    `json:"provider_message_id,omitempty"`
+	ProviderStatusCode int       `json:"provider_status_code,omitempty"`
+	ProviderResponse   string    `json:"provider_response,omitempty"`
+	OccurredAt         time.Time `json:"occurred_at"`
 }
