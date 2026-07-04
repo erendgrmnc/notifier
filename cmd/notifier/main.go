@@ -10,15 +10,18 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	"notifier/internal/api"
 	"notifier/internal/config"
+	"notifier/internal/delivery"
 	"notifier/internal/observability"
 	"notifier/internal/queue/rabbit"
 	"notifier/internal/service"
 	"notifier/internal/storage/postgres"
+	"notifier/internal/worker"
 )
 
 const requestTimeout = 30 * time.Second
@@ -59,23 +62,6 @@ func run() error {
 		logger.Info("database schema up to date")
 	}
 
-	switch cfg.Role {
-	case config.RoleAPI, config.RoleAll:
-		return runAPI(ctx, cfg, logger)
-	case config.RoleWorker:
-		// Worker components arrive with the queue integration; block
-		// until shutdown so the role is wired end to end already.
-		<-ctx.Done()
-		logger.Info("shutdown complete", slog.String("role", string(cfg.Role)))
-		return nil
-	default:
-		return fmt.Errorf("unhandled role %q", cfg.Role)
-	}
-}
-
-// runAPI serves HTTP until the context is cancelled, then drains
-// in-flight requests within the configured shutdown timeout.
-func runAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	pool, err := postgres.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("connect postgres: %w", err)
@@ -92,46 +78,68 @@ func runAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return fmt.Errorf("declare topology: %w", err)
 	}
 
-	publisher, err := rabbit.NewPublisher(rabbitConn)
-	if err != nil {
-		return fmt.Errorf("create publisher: %w", err)
-	}
-	defer publisher.Close()
-
 	repository := postgres.NewNotificationRepository(pool)
-	notifications := service.NewNotificationService(repository, publisher, realClock{}, logger)
 
-	router := api.NewRouter(api.RouterConfig{
-		Logger:         logger,
-		RequestTimeout: requestTimeout,
-		Notifications:  notifications,
-	})
+	runsAPI := cfg.Role == config.RoleAPI || cfg.Role == config.RoleAll
+	runsWorker := cfg.Role == config.RoleWorker || cfg.Role == config.RoleAll
 
-	server := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler: router,
+	var componentGroup sync.WaitGroup
+	fatalErr := make(chan error, 2)
+
+	var httpServer *http.Server
+	if runsAPI {
+		publisher, err := rabbit.NewPublisher(rabbitConn)
+		if err != nil {
+			return fmt.Errorf("create publisher: %w", err)
+		}
+		defer publisher.Close()
+
+		notifications := service.NewNotificationService(repository, publisher, realClock{}, logger)
+		router := api.NewRouter(api.RouterConfig{
+			Logger:         logger,
+			RequestTimeout: requestTimeout,
+			Notifications:  notifications,
+		})
+		httpServer = &http.Server{Addr: fmt.Sprintf(":%d", cfg.HTTPPort), Handler: router}
+
+		componentGroup.Add(1)
+		go func() {
+			defer componentGroup.Done()
+			if err := httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+				fatalErr <- fmt.Errorf("http server: %w", err)
+			}
+		}()
+		logger.Info("api listening", slog.Int("port", cfg.HTTPPort))
 	}
 
-	serveErr := make(chan error, 1)
-	go func() {
-		serveErr <- server.ListenAndServe()
-	}()
+	if runsWorker {
+		queueWorker := worker.New(repository, delivery.NewLogSender(logger), realClock{}, logger)
+
+		componentGroup.Add(1)
+		go func() {
+			defer componentGroup.Done()
+			if err := queueWorker.Run(ctx, rabbitConn, cfg.WorkerPrefetch); err != nil {
+				fatalErr <- fmt.Errorf("worker: %w", err)
+			}
+		}()
+	}
 
 	select {
-	case err := <-serveErr:
-		return fmt.Errorf("http server: %w", err)
 	case <-ctx.Done():
+	case err := <-fatalErr:
+		return err
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
-	defer cancel()
-
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("shutdown http server: %w", err)
+	// Shutdown order: stop HTTP intake first; consumers are already
+	// draining via the cancelled context; then join everything.
+	if httpServer != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		defer cancel()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("shutdown http server: %w", err)
+		}
 	}
-	if err := <-serveErr; !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("http server: %w", err)
-	}
+	componentGroup.Wait()
 
 	logger.Info("shutdown complete", slog.String("role", string(cfg.Role)))
 	return nil

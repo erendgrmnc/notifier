@@ -22,6 +22,7 @@ const (
 	defaultLogLevel        = "info"
 	defaultDatabaseURL     = "postgres://notifier:notifier@localhost:5432/notifier?sslmode=disable"
 	defaultRabbitURL       = "amqp://notifier:notifier@localhost:5672/"
+	defaultWorkerPrefetch  = 50
 )
 
 // Config holds every runtime tunable. Values come from environment
@@ -33,6 +34,7 @@ type Config struct {
 	LogLevel        string
 	DatabaseURL     string
 	RabbitURL       string
+	WorkerPrefetch  int
 }
 
 // LookupFunc returns the value of an environment variable, or "" if unset.
@@ -49,6 +51,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		LogLevel:        defaultLogLevel,
 		DatabaseURL:     defaultDatabaseURL,
 		RabbitURL:       defaultRabbitURL,
+		WorkerPrefetch:  defaultWorkerPrefetch,
 	}
 
 	if roleValue := lookup("ROLE"); roleValue != "" {
@@ -62,6 +65,9 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 
 	if err := parseInt(lookup, "HTTP_PORT", &cfg.HTTPPort); err != nil {
+		return Config{}, err
+	}
+	if err := parseInt(lookup, "WORKER_PREFETCH", &cfg.WorkerPrefetch); err != nil {
 		return Config{}, err
 	}
 	if err := parseDuration(lookup, "SHUTDOWN_TIMEOUT", &cfg.ShutdownTimeout); err != nil {
