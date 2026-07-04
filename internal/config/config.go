@@ -26,6 +26,8 @@ const (
 	defaultProviderTimeout = 10 * time.Second
 	// defaultMaxDeliveryAttempts = first attempt + one per retry tier.
 	defaultMaxDeliveryAttempts = 4
+	// defaultMaxBatchSize is the assessment's batch ceiling.
+	defaultMaxBatchSize = 1000
 	// defaultRateLimitPerChannel is the assessment's 100 msg/s ceiling.
 	defaultRateLimitPerChannel = 100
 	// defaultWorkerConcurrency is handler goroutines per channel queue.
@@ -52,6 +54,8 @@ type Config struct {
 	ProviderURL         string
 	ProviderTimeout     time.Duration
 	MaxDeliveryAttempts int
+	// MaxBatchSize caps items per batch create request.
+	MaxBatchSize int
 	// DashboardEnabled mounts the testing dashboard, worker controls,
 	// queue inspection, and the built-in mock provider.
 	DashboardEnabled bool
@@ -87,6 +91,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		WorkerPrefetch:        defaultWorkerPrefetch,
 		ProviderTimeout:       defaultProviderTimeout,
 		MaxDeliveryAttempts:   defaultMaxDeliveryAttempts,
+		MaxBatchSize:          defaultMaxBatchSize,
 		RateLimitPerChannel:   defaultRateLimitPerChannel,
 		WorkerConcurrency:     defaultWorkerConcurrency,
 		SchedulerPollInterval: defaultSchedulerPollInterval,
@@ -125,6 +130,9 @@ func Load(lookup LookupFunc) (Config, error) {
 	if err := parseDuration(lookup, "PROVIDER_TIMEOUT", &cfg.ProviderTimeout); err != nil {
 		return Config{}, err
 	}
+	if err := parseInt(lookup, "MAX_BATCH_SIZE", &cfg.MaxBatchSize); err != nil {
+		return Config{}, err
+	}
 	if err := parseInt(lookup, "MAX_DELIVERY_ATTEMPTS", &cfg.MaxDeliveryAttempts); err != nil {
 		return Config{}, err
 	}
@@ -152,6 +160,9 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 	if cfg.WorkerConcurrency < 1 {
 		return Config{}, fmt.Errorf("parse WORKER_CONCURRENCY: must be at least 1, got %d", cfg.WorkerConcurrency)
+	}
+	if cfg.MaxBatchSize < 1 {
+		return Config{}, fmt.Errorf("parse MAX_BATCH_SIZE: must be at least 1, got %d", cfg.MaxBatchSize)
 	}
 
 	return cfg, nil

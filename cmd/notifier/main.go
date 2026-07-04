@@ -199,6 +199,7 @@ func run() error {
 			Queues:             inspector,
 			ProviderStore:      mockprovider.NewStore(),
 			DefaultProviderURL: cfg.ProviderURL,
+			MaxBatchSize:       cfg.MaxBatchSize,
 		})
 		if cfg.DashboardEnabled {
 			logger.Info("testing dashboard enabled", slog.String("path", "/dashboard"))

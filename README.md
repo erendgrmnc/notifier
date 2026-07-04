@@ -187,6 +187,7 @@ Everything is environment-driven (defaults in parentheses):
 | `PROVIDER_URL` | Delivery endpoint; empty = log-simulated sends |
 | `PROVIDER_TIMEOUT` | Outbound send timeout (10s) |
 | `MAX_DELIVERY_ATTEMPTS` | First try + retries (4) |
+| `MAX_BATCH_SIZE` | Items per batch request (1000) |
 | `RATE_LIMIT_PER_CHANNEL` | Deliveries/sec per channel (100) |
 | `WORKER_CONCURRENCY` | Handlers per channel queue (10) |
 | `WORKER_PREFETCH` | AMQP prefetch per consumer (50) |

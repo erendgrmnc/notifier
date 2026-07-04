@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"notifier/internal/mockprovider"
+	"notifier/internal/service"
 )
 
 // RouterConfig carries the dependencies the HTTP layer needs.
@@ -39,6 +40,9 @@ type RouterConfig struct {
 	// DefaultProviderURL is displayed as the effective target when no
 	// runtime override is set.
 	DefaultProviderURL string
+	// MaxBatchSize caps items per batch create request; zero falls back
+	// to the service default.
+	MaxBatchSize int
 }
 
 // NewRouter builds the service router with the standard middleware chain:
@@ -76,7 +80,11 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 		return router
 	}
 
-	notifications := &notificationHandler{notifications: cfg.Notifications, logger: cfg.Logger}
+	maxBatchSize := cfg.MaxBatchSize
+	if maxBatchSize < 1 {
+		maxBatchSize = service.MaxBatchSize // zero value in tests and ops-mode routers
+	}
+	notifications := &notificationHandler{notifications: cfg.Notifications, maxBatchSize: maxBatchSize, logger: cfg.Logger}
 	dashboard := &dashboardHandler{
 		workerControl:   cfg.WorkerControl,
 		queues:          cfg.Queues,

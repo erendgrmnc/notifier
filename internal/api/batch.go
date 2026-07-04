@@ -11,7 +11,8 @@ import (
 	"notifier/internal/service"
 )
 
-// maxBatchBodyBytes fits MaxBatchSize items with generous content.
+// maxBatchBodyBytes fits the default batch size with generous content;
+// raising MAX_BATCH_SIZE far beyond it makes this cap bind first.
 const maxBatchBodyBytes = 10 << 20 // 10 MiB
 
 type batchRequest struct {
@@ -54,9 +55,9 @@ func (handler *notificationHandler) createBatch(writer http.ResponseWriter, requ
 		writeErrorResponse(writer, http.StatusBadRequest, "notifications must not be empty", nil)
 		return
 	}
-	if len(payload.Notifications) > service.MaxBatchSize {
+	if len(payload.Notifications) > handler.maxBatchSize {
 		writeErrorResponse(writer, http.StatusBadRequest,
-			fmt.Sprintf("batch exceeds %d notifications", service.MaxBatchSize), nil)
+			fmt.Sprintf("batch exceeds %d notifications", handler.maxBatchSize), nil)
 		return
 	}
 

@@ -147,7 +147,8 @@ paths:
       tags: [notifications]
       summary: Create a batch of notifications
       description: |
-        Up to 1000 notifications in one request under a shared batch_id.
+        Up to MAX_BATCH_SIZE notifications (default 1000) in one request
+        under a shared batch_id.
         Partial success: invalid items are rejected per index, duplicate
         idempotency keys are reported with the existing notification's
         ID, and valid items proceed.
@@ -162,6 +163,7 @@ paths:
               properties:
                 notifications:
                   type: array
+                  # server enforces MAX_BATCH_SIZE (default 1000)
                   maxItems: 1000
                   items:
                     $ref: '#/components/schemas/CreateNotificationRequest'
@@ -200,7 +202,7 @@ paths:
                           items:
                             $ref: '#/components/schemas/FieldError'
         '400':
-          description: Malformed body, empty batch, or more than 1000 items.
+          description: Malformed body, empty batch, or more items than MAX_BATCH_SIZE allows.
           content:
             application/json:
               schema:

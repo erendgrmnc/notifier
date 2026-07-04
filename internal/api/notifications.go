@@ -33,7 +33,9 @@ type NotificationService interface {
 
 type notificationHandler struct {
 	notifications NotificationService
-	logger        *slog.Logger
+	// maxBatchSize caps items per batch request (MAX_BATCH_SIZE).
+	maxBatchSize int
+	logger       *slog.Logger
 }
 
 type templateRefRequest struct {

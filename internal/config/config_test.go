@@ -60,6 +60,9 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{name: "unknown role", key: "ROLE", val: "gateway"},
 		{name: "non-numeric port", key: "HTTP_PORT", val: "eighty"},
 		{name: "malformed duration", key: "SHUTDOWN_TIMEOUT", val: "10 minutes"},
+		{name: "zero rate limit", key: "RATE_LIMIT_PER_CHANNEL", val: "0"},
+		{name: "zero concurrency", key: "WORKER_CONCURRENCY", val: "0"},
+		{name: "zero batch size", key: "MAX_BATCH_SIZE", val: "0"},
 	}
 
 	for _, tc := range testCases {

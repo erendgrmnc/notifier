@@ -12,7 +12,8 @@ import (
 	"notifier/internal/observability"
 )
 
-// MaxBatchSize is the assessment's batch ceiling.
+// MaxBatchSize is the default batch ceiling (the assessment's spec);
+// deployments tune it with MAX_BATCH_SIZE.
 const MaxBatchSize = 1000
 
 // BatchRepository is the additional persistence surface batch creation
