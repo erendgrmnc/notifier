@@ -138,7 +138,7 @@ const (
 
 func newTestWorker(repo *fakeRepository, sender *fakeSender, publisher *fakePublisher) *Worker {
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
-	return New(repo, sender, publisher, &fakePauseChecker{}, fixedClock{now: testNow}, logger,
+	return New(repo, sender, publisher, &fakePauseChecker{}, fixedClock{now: testNow}, logger, nil,
 		testMaxAttempts, testRateLimit, testConcurrency)
 }
 
@@ -148,7 +148,7 @@ func TestRateLimiterThrottlesDeliveries(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	// 20/s with burst 20... too permissive to observe; use a limiter of
 	// 20/s but burst 1 by constructing then draining the initial burst.
-	queueWorker := New(repo, sender, &fakePublisher{}, &fakePauseChecker{}, fixedClock{now: testNow}, logger,
+	queueWorker := New(repo, sender, &fakePublisher{}, &fakePauseChecker{}, fixedClock{now: testNow}, logger, nil,
 		testMaxAttempts, 20, testConcurrency)
 	// Drain the initial burst allowance so subsequent sends pay full price.
 	limiter := queueWorker.limiters[domain.ChannelSMS]

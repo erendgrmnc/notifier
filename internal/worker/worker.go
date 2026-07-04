@@ -48,6 +48,12 @@ type Clock interface {
 	Now() time.Time
 }
 
+// Instrumentation records delivery metrics; nil disables recording.
+type Instrumentation interface {
+	DeliveryAttempt(channel, outcome string, duration time.Duration)
+	NotificationDelivered(channel, status string)
+}
+
 // outcomeWriteTimeout bounds the persistence of a delivery outcome. The
 // write runs on a detached context: once the provider accepted (or
 // definitively rejected) the message, the result must be recorded even
@@ -62,6 +68,7 @@ type Worker struct {
 	pause       PauseChecker
 	clock       Clock
 	logger      *slog.Logger
+	metrics     Instrumentation
 	maxAttempts int
 	concurrency int
 	// limiters throttle deliveries per channel. One limiter is shared by
@@ -72,7 +79,7 @@ type Worker struct {
 	lastPaused atomic.Bool
 }
 
-func New(repo Repository, sender Sender, publisher Publisher, pause PauseChecker, clock Clock, logger *slog.Logger, maxAttempts, ratePerChannel, concurrency int) *Worker {
+func New(repo Repository, sender Sender, publisher Publisher, pause PauseChecker, clock Clock, logger *slog.Logger, metrics Instrumentation, maxAttempts, ratePerChannel, concurrency int) *Worker {
 	limiters := make(map[domain.Channel]*rate.Limiter, len(domain.Channels()))
 	for _, deliveryChannel := range domain.Channels() {
 		limiters[deliveryChannel] = rate.NewLimiter(rate.Limit(ratePerChannel), ratePerChannel)
@@ -84,9 +91,22 @@ func New(repo Repository, sender Sender, publisher Publisher, pause PauseChecker
 		pause:       pause,
 		clock:       clock,
 		logger:      logger,
+		metrics:     metrics,
 		maxAttempts: maxAttempts,
 		concurrency: concurrency,
 		limiters:    limiters,
+	}
+}
+
+func (worker *Worker) recordAttempt(channel domain.Channel, outcome string, duration time.Duration) {
+	if worker.metrics != nil {
+		worker.metrics.DeliveryAttempt(string(channel), outcome, duration)
+	}
+}
+
+func (worker *Worker) recordDelivered(channel domain.Channel, status domain.Status) {
+	if worker.metrics != nil {
+		worker.metrics.NotificationDelivered(string(channel), string(status))
 	}
 }
 
@@ -132,7 +152,9 @@ func (worker *Worker) processNotification(ctx context.Context, id uuid.UUID) err
 		return fmt.Errorf("rate limit wait: %w", err)
 	}
 
+	sendStarted := time.Now()
 	providerMessageID, sendErr := worker.sender.Send(ctx, claimed)
+	sendDuration := time.Since(sendStarted)
 
 	// The send is irreversible; its outcome is written on a detached
 	// context so shutdown cannot lose what actually happened.
@@ -140,8 +162,14 @@ func (worker *Worker) processNotification(ctx context.Context, id uuid.UUID) err
 	defer cancelOutcome()
 
 	if sendErr != nil {
+		outcome := "permanent"
+		if delivery.IsRetryable(sendErr) {
+			outcome = "retryable"
+		}
+		worker.recordAttempt(claimed.Channel, outcome, sendDuration)
 		return worker.handleSendFailure(outcomeCtx, logger, claimed, sendErr)
 	}
+	worker.recordAttempt(claimed.Channel, "success", sendDuration)
 
 	if err := worker.repo.MarkSent(outcomeCtx, id, providerMessageID, worker.clock.Now()); err != nil {
 		if errors.Is(err, domain.ErrInvalidTransition) {
@@ -150,6 +178,7 @@ func (worker *Worker) processNotification(ctx context.Context, id uuid.UUID) err
 		}
 		return fmt.Errorf("mark sent: %w", err)
 	}
+	worker.recordDelivered(claimed.Channel, domain.StatusSent)
 
 	logger.Info("notification delivered",
 		slog.String("provider_message_id", providerMessageID),
@@ -197,6 +226,7 @@ func (worker *Worker) handleSendFailure(ctx context.Context, logger *slog.Logger
 		}
 		return fmt.Errorf("mark failed: %w", err)
 	}
+	worker.recordDelivered(claimed.Channel, domain.StatusFailed)
 	// DLQ publish failure is logged, not retried: the database row is the
 	// source of truth and already records the failure.
 	if err := worker.publisher.PublishDeadLetter(ctx, claimed, reason); err != nil {

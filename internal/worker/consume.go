@@ -11,6 +11,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 
 	"notifier/internal/domain"
+	"notifier/internal/observability"
 	"notifier/internal/queue/rabbit"
 )
 
@@ -206,6 +207,12 @@ func (worker *Worker) isPaused(ctx context.Context) bool {
 }
 
 func (worker *Worker) handleDelivery(ctx context.Context, logger *slog.Logger, delivery amqp.Delivery) {
+	// Adopt the producer's correlation ID so this message's log lines
+	// join the API request that created it.
+	if delivery.CorrelationId != "" {
+		ctx = observability.WithCorrelationID(ctx, delivery.CorrelationId)
+	}
+
 	var message rabbit.Message
 	if err := json.Unmarshal(delivery.Body, &message); err != nil {
 		logger.Warn("unparseable message dropped", slog.Any("error", err))

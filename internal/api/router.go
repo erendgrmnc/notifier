@@ -18,6 +18,11 @@ type RouterConfig struct {
 	RequestTimeout time.Duration
 	Notifications  NotificationService
 
+	// Observability endpoints; nil-safe for tests.
+	Metrics        HTTPMetrics
+	MetricsHandler http.Handler
+	Readiness      ReadinessChecks
+
 	// Testing-dashboard dependencies; mounted only when DashboardEnabled.
 	DashboardEnabled bool
 	WorkerControl    WorkerControl
@@ -26,17 +31,35 @@ type RouterConfig struct {
 }
 
 // NewRouter builds the service router with the standard middleware chain:
-// correlation ID → request logging → panic recovery → per-request timeout.
+// correlation ID → metrics → request logging → panic recovery → timeout.
 func NewRouter(cfg RouterConfig) *chi.Mux {
 	router := chi.NewRouter()
 
 	router.Use(correlationID)
+	if cfg.Metrics != nil {
+		router.Use(httpMetrics(cfg.Metrics))
+	}
 	router.Use(requestLogger(cfg.Logger))
 	router.Use(recoverPanic(cfg.Logger))
 	router.Use(middleware.Timeout(cfg.RequestTimeout))
 
 	router.Get("/healthz", handleHealthz)
+	if cfg.Readiness != nil {
+		router.Get("/readyz", handleReadyz(cfg.Readiness))
+	}
+	if cfg.MetricsHandler != nil {
+		router.Method(http.MethodGet, "/metrics", cfg.MetricsHandler)
+	}
 	router.Get("/docs", handleSwaggerUI)
+
+	// The contract is static; serve it in every mode.
+	router.Get("/api/v1/openapi.yaml", handleOpenAPISpec)
+
+	// A nil service builds an ops-only router (worker role): probes and
+	// metrics without the notification API.
+	if cfg.Notifications == nil {
+		return router
+	}
 
 	notifications := &notificationHandler{notifications: cfg.Notifications, logger: cfg.Logger}
 	dashboard := &dashboardHandler{
@@ -47,7 +70,6 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 	}
 
 	router.Route("/api/v1", func(v1 chi.Router) {
-		v1.Get("/openapi.yaml", handleOpenAPISpec)
 		v1.Post("/notifications", notifications.create)
 		v1.Post("/notifications/batch", notifications.createBatch)
 		v1.Get("/notifications", notifications.list)

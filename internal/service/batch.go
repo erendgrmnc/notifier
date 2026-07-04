@@ -121,6 +121,9 @@ func (svc *NotificationService) CreateBatch(ctx context.Context, inputs []Create
 	if err := svc.batchRepo.CreateBatch(ctx, toInsert); err != nil {
 		return BatchResult{}, fmt.Errorf("insert batch: %w", err)
 	}
+	for _, notification := range toInsert {
+		svc.recordCreated(notification)
+	}
 
 	// Publish after commit, never inside the transaction — a rollback
 	// must not leave phantom messages. Failures leave rows pending for

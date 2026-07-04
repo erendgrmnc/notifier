@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 
@@ -49,6 +50,35 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 				slog.Int("status", status),
 				slog.Duration("duration", time.Since(started)),
 			)
+		})
+	}
+}
+
+// HTTPMetrics records request latency by route pattern.
+type HTTPMetrics interface {
+	ObserveHTTPRequest(route, method string, statusCode int, duration time.Duration)
+}
+
+// httpMetrics observes every request against the chi route pattern
+// (resolved after routing), so cardinality stays bounded by routes, not
+// by raw URLs.
+func httpMetrics(metrics HTTPMetrics) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			started := time.Now()
+			wrapped := middleware.NewWrapResponseWriter(writer, request.ProtoMajor)
+
+			next.ServeHTTP(wrapped, request)
+
+			route := chi.RouteContext(request.Context()).RoutePattern()
+			if route == "" {
+				route = "unmatched"
+			}
+			status := wrapped.Status()
+			if status == 0 {
+				status = http.StatusOK
+			}
+			metrics.ObserveHTTPRequest(route, request.Method, status, time.Since(started))
 		})
 	}
 }

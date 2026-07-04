@@ -60,6 +60,11 @@ services:
     build: .
     image: notifier:local
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8081/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     environment:
       ROLE: worker
       DATABASE_URL: postgres://notifier:notifier@postgres:5432/notifier?sslmode=disable

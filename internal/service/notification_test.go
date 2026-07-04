@@ -112,7 +112,7 @@ func newTestService(repo *fakeRepository) *NotificationService {
 
 func newTestServiceWithPublisher(repo *fakeRepository, publisher *fakePublisher) *NotificationService {
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
-	return NewNotificationService(repo, &fakeBatchRepository{fakeRepository: repo}, publisher, fixedClock{now: testNow}, logger)
+	return NewNotificationService(repo, &fakeBatchRepository{fakeRepository: repo}, publisher, fixedClock{now: testNow}, logger, nil)
 }
 
 func TestCreatePublishesAndMarksQueued(t *testing.T) {

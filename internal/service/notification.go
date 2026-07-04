@@ -42,6 +42,11 @@ type Clock interface {
 	Now() time.Time
 }
 
+// Instrumentation records business metrics; nil disables recording.
+type Instrumentation interface {
+	NotificationCreated(channel, priority string)
+}
+
 // NotificationService implements the create/query use cases.
 type NotificationService struct {
 	repo      Repository
@@ -49,10 +54,17 @@ type NotificationService struct {
 	publisher Publisher
 	clock     Clock
 	logger    *slog.Logger
+	metrics   Instrumentation
 }
 
-func NewNotificationService(repo Repository, batchRepo BatchRepository, publisher Publisher, clock Clock, logger *slog.Logger) *NotificationService {
-	return &NotificationService{repo: repo, batchRepo: batchRepo, publisher: publisher, clock: clock, logger: logger}
+func NewNotificationService(repo Repository, batchRepo BatchRepository, publisher Publisher, clock Clock, logger *slog.Logger, metrics Instrumentation) *NotificationService {
+	return &NotificationService{repo: repo, batchRepo: batchRepo, publisher: publisher, clock: clock, logger: logger, metrics: metrics}
+}
+
+func (svc *NotificationService) recordCreated(notification domain.Notification) {
+	if svc.metrics != nil {
+		svc.metrics.NotificationCreated(string(notification.Channel), string(notification.Priority))
+	}
 }
 
 // CreateInput carries the validated-shape request for one notification.
@@ -113,6 +125,7 @@ func (svc *NotificationService) Create(ctx context.Context, input CreateInput) (
 	if err != nil {
 		return CreateResult{}, fmt.Errorf("create notification: %w", err)
 	}
+	svc.recordCreated(notification)
 
 	// Scheduled notifications wait for the scheduler; immediate ones go
 	// to the queue now. A failed publish is deliberately not an error:

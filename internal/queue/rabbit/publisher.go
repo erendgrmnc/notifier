@@ -9,6 +9,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 
 	"notifier/internal/domain"
+	"notifier/internal/observability"
 )
 
 // AMQP message priorities within the queues' x-max-priority=10 range.
@@ -96,7 +97,11 @@ func (publisher *Publisher) publishNotification(ctx context.Context, exchange st
 }
 
 // publishConfirmed publishes one message and waits for the broker confirm.
+// The context's correlation ID rides the AMQP header so worker logs join
+// the API request logs.
 func (publisher *Publisher) publishConfirmed(ctx context.Context, exchange, routingKey string, publishing amqp.Publishing) error {
+	publishing.CorrelationId = observability.CorrelationIDFrom(ctx)
+
 	publisher.mu.Lock()
 	defer publisher.mu.Unlock()
 

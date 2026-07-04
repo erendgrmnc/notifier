@@ -32,6 +32,31 @@ type realClock struct{}
 
 func (realClock) Now() time.Time { return time.Now() }
 
+// queueDepthPollInterval is how often the queue-depth gauge samples.
+const queueDepthPollInterval = 5 * time.Second
+
+// pollQueueDepths keeps the queue_depth gauge current until ctx ends.
+func pollQueueDepths(ctx context.Context, inspector *rabbit.Inspector, metrics *observability.Metrics, logger *slog.Logger) {
+	ticker := time.NewTicker(queueDepthPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			depths, err := inspector.QueueDepths()
+			if err != nil {
+				logger.Warn("queue depth poll failed", slog.Any("error", err))
+				continue
+			}
+			for _, depth := range depths {
+				metrics.SetQueueDepth(depth.Name, depth.Ready)
+			}
+		}
+	}
+}
+
 // newSender selects the delivery provider: the real webhook sender when
 // PROVIDER_URL is configured, otherwise the logging simulator.
 func newSender(cfg config.Config, logger *slog.Logger) worker.Sender {
@@ -97,22 +122,44 @@ func run() error {
 	}
 	defer publisher.Close()
 
+	metrics := observability.NewMetrics()
+	inspector := rabbit.NewInspector(rabbitConn)
+	readiness := api.ReadinessChecks{
+		"postgres": func(checkCtx context.Context) error { return pool.Ping(checkCtx) },
+		"rabbitmq": func(context.Context) error {
+			if rabbitConn.IsClosed() {
+				return errors.New("connection closed")
+			}
+			return nil
+		},
+	}
+
 	runsAPI := cfg.Role == config.RoleAPI || cfg.Role == config.RoleAll
 	runsWorker := cfg.Role == config.RoleWorker || cfg.Role == config.RoleAll
 
 	var componentGroup sync.WaitGroup
 	fatalErr := make(chan error, 2)
 
+	// Queue-depth gauge poller: owned here, stopped by ctx, joined below.
+	componentGroup.Add(1)
+	go func() {
+		defer componentGroup.Done()
+		pollQueueDepths(ctx, inspector, metrics, logger)
+	}()
+
 	var httpServer *http.Server
 	if runsAPI {
-		notifications := service.NewNotificationService(repository, repository, publisher, realClock{}, logger)
+		notifications := service.NewNotificationService(repository, repository, publisher, realClock{}, logger, metrics)
 		router := api.NewRouter(api.RouterConfig{
 			Logger:           logger,
 			RequestTimeout:   requestTimeout,
 			Notifications:    notifications,
+			Metrics:          metrics,
+			MetricsHandler:   metrics.Handler(),
+			Readiness:        readiness,
 			DashboardEnabled: cfg.DashboardEnabled,
 			WorkerControl:    repository,
-			Queues:           rabbit.NewInspector(rabbitConn),
+			Queues:           inspector,
 			ProviderStore:    mockprovider.NewStore(),
 		})
 		if cfg.DashboardEnabled {
@@ -131,7 +178,7 @@ func run() error {
 	}
 
 	if runsWorker {
-		queueWorker := worker.New(repository, newSender(cfg, logger), publisher, repository, realClock{}, logger,
+		queueWorker := worker.New(repository, newSender(cfg, logger), publisher, repository, realClock{}, logger, metrics,
 			cfg.MaxDeliveryAttempts, cfg.RateLimitPerChannel, cfg.WorkerConcurrency)
 
 		componentGroup.Add(1)
@@ -141,6 +188,28 @@ func run() error {
 				fatalErr <- fmt.Errorf("worker: %w", err)
 			}
 		}()
+
+		// A worker-only process still serves /healthz, /readyz, /metrics
+		// so it is probeable and scrapeable.
+		if !runsAPI {
+			opsRouter := api.NewRouter(api.RouterConfig{
+				Logger:         logger,
+				RequestTimeout: requestTimeout,
+				Metrics:        metrics,
+				MetricsHandler: metrics.Handler(),
+				Readiness:      readiness,
+			})
+			httpServer = &http.Server{Addr: fmt.Sprintf(":%d", cfg.HTTPPort), Handler: opsRouter}
+
+			componentGroup.Add(1)
+			go func() {
+				defer componentGroup.Done()
+				if err := httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+					fatalErr <- fmt.Errorf("ops server: %w", err)
+				}
+			}()
+			logger.Info("ops endpoints listening", slog.Int("port", cfg.HTTPPort))
+		}
 	}
 
 	select {
