@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -81,6 +82,12 @@ func (handler *notificationHandler) create(writer http.ResponseWriter, request *
 
 	var payload createNotificationRequest
 	if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeErrorResponse(writer, http.StatusRequestEntityTooLarge,
+				fmt.Sprintf("request body exceeds %d bytes", tooLarge.Limit), nil)
+			return
+		}
 		writeErrorResponse(writer, http.StatusBadRequest, "malformed JSON body", nil)
 		return
 	}

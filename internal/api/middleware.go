@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 
 	"notifier/internal/observability"
@@ -27,31 +28,25 @@ func correlationID(next http.Handler) http.Handler {
 	})
 }
 
-// statusRecorder captures the response code for the request log line.
-type statusRecorder struct {
-	http.ResponseWriter
-	status int
-}
-
-func (recorder *statusRecorder) WriteHeader(code int) {
-	recorder.status = code
-	recorder.ResponseWriter.WriteHeader(code)
-}
-
 // requestLogger emits one structured line per request with the
-// context's correlation ID attached.
+// context's correlation ID attached. chi's response wrapper is used so
+// Flusher/Hijacker pass through (the WebSocket upgrade needs Hijacker).
 func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 			started := time.Now()
-			recorder := &statusRecorder{ResponseWriter: writer, status: http.StatusOK}
+			wrapped := middleware.NewWrapResponseWriter(writer, request.ProtoMajor)
 
-			next.ServeHTTP(recorder, request)
+			next.ServeHTTP(wrapped, request)
 
+			status := wrapped.Status()
+			if status == 0 {
+				status = http.StatusOK // handler returned without writing
+			}
 			observability.LoggerFrom(request.Context(), logger).Info("http request",
 				slog.String("method", request.Method),
 				slog.String("path", request.URL.Path),
-				slog.Int("status", recorder.status),
+				slog.Int("status", status),
 				slog.Duration("duration", time.Since(started)),
 			)
 		})

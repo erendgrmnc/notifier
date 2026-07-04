@@ -107,6 +107,19 @@ func TestCreateNotificationValidationFailureReturns400(t *testing.T) {
 	}
 }
 
+func TestCreateNotificationOversizedBodyReturns413(t *testing.T) {
+	router := newRouterWithService(newFakeNotificationService())
+
+	oversized := `{"recipient":"+905551234567","channel":"email","content":"` +
+		strings.Repeat("x", maxRequestBodyBytes+1) + `"}`
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/notifications", strings.NewReader(oversized)))
+
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", recorder.Code)
+	}
+}
+
 func TestCreateNotificationMalformedJSONReturns400(t *testing.T) {
 	router := newRouterWithService(newFakeNotificationService())
 

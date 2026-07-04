@@ -26,9 +26,16 @@ func Migrate(databaseURL string) (applied bool, err error) {
 		return false, fmt.Errorf("open embedded migrations: %w", err)
 	}
 
-	// The service uses one postgres:// URL everywhere; golang-migrate
-	// selects its pgx/v5 driver by the pgx5:// scheme.
-	migrateURL := strings.Replace(databaseURL, "postgres://", "pgx5://", 1)
+	// The service uses one postgres URL everywhere; golang-migrate
+	// selects its pgx/v5 driver by the pgx5:// scheme. Both URL schemes
+	// pgxpool accepts must be rewritten.
+	migrateURL := databaseURL
+	for _, scheme := range []string{"postgresql://", "postgres://"} {
+		if rest, found := strings.CutPrefix(databaseURL, scheme); found {
+			migrateURL = "pgx5://" + rest
+			break
+		}
+	}
 
 	migrator, err := migrate.NewWithSourceInstance("iofs", source, migrateURL)
 	if err != nil {
