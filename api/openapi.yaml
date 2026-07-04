@@ -45,6 +45,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Notification'
+        '200':
+          description: Idempotent replay — the idempotency_key matched an existing notification, returned unchanged.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
         '400':
           description: Malformed JSON or failed validation. Every failing field is listed.
           content:
@@ -62,8 +68,8 @@ paths:
 
     get:
       tags: [notifications]
-      summary: List recent notifications
-      description: Newest first. Filtering and cursor pagination arrive in a later release.
+      summary: List notifications
+      description: Newest first, filterable, keyset-paginated via opaque cursor.
       operationId: listNotifications
       parameters:
         - name: limit
@@ -74,9 +80,45 @@ paths:
             type: integer
             minimum: 1
             maximum: 100
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Status'
+        - name: channel
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Channel'
+        - name: batch_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: from
+          in: query
+          required: false
+          description: Created-at lower bound (RFC3339).
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          description: Created-at upper bound (RFC3339).
+          schema:
+            type: string
+            format: date-time
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque pagination token from a previous page's next_cursor.
+          schema:
+            type: string
       responses:
         '200':
-          description: Recent notifications.
+          description: Matching notifications.
           content:
             application/json:
               schema:
@@ -86,8 +128,127 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/Notification'
+                  next_cursor:
+                    type: string
+                    description: Pass as cursor for the next page; empty when no more pages.
         '400':
           description: limit is not a positive integer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/notifications/batch:
+    post:
+      tags: [notifications]
+      summary: Create a batch of notifications
+      description: |
+        Up to 1000 notifications in one request under a shared batch_id.
+        Partial success: invalid items are rejected per index, duplicate
+        idempotency keys are reported with the existing notification's
+        ID, and valid items proceed.
+      operationId: createNotificationBatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [notifications]
+              properties:
+                notifications:
+                  type: array
+                  maxItems: 1000
+                  items:
+                    $ref: '#/components/schemas/CreateNotificationRequest'
+      responses:
+        '201':
+          description: Batch processed; inspect per-item results.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  batch_id:
+                    type: string
+                    format: uuid
+                  accepted:
+                    type: integer
+                  rejected:
+                    type: integer
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        index:
+                          type: integer
+                        status:
+                          type: string
+                          enum: [accepted, rejected, duplicate]
+                        notification:
+                          $ref: '#/components/schemas/Notification'
+                        existing_id:
+                          type: string
+                          format: uuid
+                        errors:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/FieldError'
+        '400':
+          description: Malformed body, empty batch, or more than 1000 items.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: Request body exceeds the 10 MiB batch limit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/notifications/{id}/cancel:
+    post:
+      tags: [notifications]
+      summary: Cancel a notification
+      description: |
+        Cancels a pending, scheduled, or queued notification. Cancelled
+        notifications are never delivered; a message already in the queue
+        is dropped when a worker picks it up.
+      operationId: cancelNotification
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '400':
+          description: The id is not a valid UUID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: No notification with this ID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: The notification is processing or already terminal.
           content:
             application/json:
               schema:
@@ -332,7 +493,8 @@ components:
           type: string
           description: |
             Client-supplied key preventing duplicate creation on retries.
-            Reserved — enforced in an upcoming release.
+            Reusing a key returns the original notification with 200
+            instead of creating a duplicate.
 
     Notification:
       type: object
