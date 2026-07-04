@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"sync"
 	"time"
 
 	dto "github.com/prometheus/client_model/go"
@@ -26,8 +27,15 @@ type LifetimeCounter interface {
 	CountNotificationStatuses(ctx context.Context) ([]domain.StatusCount, error)
 }
 
-// workerMetricsTimeout bounds the cross-service metrics fetch.
-const workerMetricsTimeout = 2 * time.Second
+// workerMetricsTimeout bounds the cross-service metrics fetch. It is
+// deliberately tight: the dashboard's refresh cycle renders nothing
+// until this handler answers, so a hanging worker must not hold it up.
+const workerMetricsTimeout = 500 * time.Millisecond
+
+// workerFetchCooldown suppresses worker fetches after a failure, so an
+// unreachable worker costs one stalled request per window instead of
+// stalling every dashboard refresh until it comes back.
+const workerFetchCooldown = 5 * time.Second
 
 // metricsSummary is the dashboard-friendly JSON view of the Prometheus
 // counters. In a split api/worker deployment the delivery-side series
@@ -37,6 +45,10 @@ type metricsSummaryHandler struct {
 	lifetime  LifetimeCounter
 	workerURL string
 	client    *http.Client
+	now       func() time.Time
+
+	mu                sync.Mutex
+	lastWorkerFailure time.Time
 }
 
 func newMetricsSummaryHandler(local MetricsGatherer, lifetime LifetimeCounter, workerURL string) *metricsSummaryHandler {
@@ -45,7 +57,27 @@ func newMetricsSummaryHandler(local MetricsGatherer, lifetime LifetimeCounter, w
 		lifetime:  lifetime,
 		workerURL: workerURL,
 		client:    &http.Client{Timeout: workerMetricsTimeout},
+		now:       time.Now,
 	}
+}
+
+// workerFetchAllowed reports whether enough time has passed since the
+// last failed worker fetch to try again.
+func (handler *metricsSummaryHandler) workerFetchAllowed() bool {
+	handler.mu.Lock()
+	defer handler.mu.Unlock()
+	return handler.lastWorkerFailure.IsZero() ||
+		handler.now().Sub(handler.lastWorkerFailure) >= workerFetchCooldown
+}
+
+func (handler *metricsSummaryHandler) recordWorkerFetch(err error) {
+	handler.mu.Lock()
+	defer handler.mu.Unlock()
+	if err != nil {
+		handler.lastWorkerFailure = handler.now()
+		return
+	}
+	handler.lastWorkerFailure = time.Time{}
 }
 
 type labeledValue struct {
@@ -88,9 +120,12 @@ func (handler *metricsSummaryHandler) serve(writer http.ResponseWriter, request 
 	accumulate(&summary, localFamilies)
 
 	// Best effort: a split-role deployment merges the worker's series;
-	// a missing worker just means api-only numbers.
-	if handler.workerURL != "" {
-		if workerFamilies, err := handler.fetchWorkerFamilies(request); err == nil {
+	// a missing worker just means api-only numbers. Failures start a
+	// cooldown so an unreachable worker cannot stall every refresh.
+	if handler.workerURL != "" && handler.workerFetchAllowed() {
+		workerFamilies, err := handler.fetchWorkerFamilies(request)
+		handler.recordWorkerFetch(err)
+		if err == nil {
 			accumulate(&summary, workerFamilies)
 			summary.Sources = append(summary.Sources, "worker")
 		}

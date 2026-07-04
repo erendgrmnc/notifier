@@ -86,6 +86,67 @@ func TestMetricsSummaryMergesWorkerSeries(t *testing.T) {
 	}
 }
 
+// A failing worker fetch must not stall every summary request: the
+// dashboard polls this endpoint every second and renders nothing until
+// it answers, so repeated timeouts freeze the whole dashboard.
+func TestMetricsSummarySkipsWorkerFetchDuringCooldown(t *testing.T) {
+	fetches := 0
+	healthy := false
+	workerServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		fetches++
+		if healthy {
+			fmt.Fprint(writer, workerExposition)
+			return
+		}
+		fmt.Fprint(writer, "not a metrics exposition {{{")
+	}))
+	defer workerServer.Close()
+
+	handler := newMetricsSummaryHandler(observability.NewMetrics(), nil, workerServer.URL)
+	current := time.Now()
+	handler.now = func() time.Time { return current }
+
+	summaryFor := func(t *testing.T) metricsSummary {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		handler.serve(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/metrics/summary", nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("summary = %d, want 200", recorder.Code)
+		}
+		var summary metricsSummary
+		if err := json.Unmarshal(recorder.Body.Bytes(), &summary); err != nil {
+			t.Fatalf("unmarshal summary: %v", err)
+		}
+		return summary
+	}
+
+	summaryFor(t) // first request discovers the failure
+	if fetches != 1 {
+		t.Fatalf("fetches after first serve = %d, want 1", fetches)
+	}
+
+	summaryFor(t) // within cooldown: no fetch attempt
+	if fetches != 1 {
+		t.Errorf("fetches within cooldown = %d, want still 1", fetches)
+	}
+
+	healthy = true
+	current = current.Add(workerFetchCooldown + time.Second)
+	summary := summaryFor(t) // cooldown elapsed: retry and recover
+	if fetches != 2 {
+		t.Errorf("fetches after cooldown = %d, want 2", fetches)
+	}
+	recovered := false
+	for _, source := range summary.Sources {
+		if source == "worker" {
+			recovered = true
+		}
+	}
+	if !recovered {
+		t.Errorf("sources = %v, want worker merged back after recovery", summary.Sources)
+	}
+}
+
 func TestMetricsSummaryWorksWithoutWorker(t *testing.T) {
 	local := observability.NewMetrics()
 	local.NotificationCreated("email", "normal")
