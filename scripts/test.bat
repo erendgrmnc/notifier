@@ -28,10 +28,13 @@ if not "%SUITE%"=="all" if not "%SUITE%"=="unit" (
 )
 
 rem --- vet ---------------------------------------------------------------
+echo [1/4] vet: go vet ./...
 go vet ./... >"%WORK_DIR%\vet.out" 2>&1
 if errorlevel 1 (set "VET_RESULT=FAIL" & set "FAILED=1") else set "VET_RESULT=PASS"
+echo       done: %VET_RESULT%
 
 rem --- unit + coverage ----------------------------------------------------
+echo [2/4] unit: go test ./...
 go test -coverprofile="%WORK_DIR%\cover.out" ./... >"%WORK_DIR%\unit.out" 2>&1
 if errorlevel 1 (
     set "UNIT_RESULT=FAIL"
@@ -41,9 +44,11 @@ if errorlevel 1 (
     set "UNIT_RESULT=PASS"
     for /f %%c in ('findstr /r /c:"^ok" "%WORK_DIR%\unit.out" ^| find /c /v ""') do set "UNIT_DETAILS=%%c packages green"
 )
+echo       done: %UNIT_RESULT%
 for /f "tokens=3" %%p in ('go tool cover -func^="%WORK_DIR%\cover.out" 2^>nul ^| findstr /b "total:"') do set "COVER_TOTAL=%%p"
 
 rem --- race (needs cgo) ----------------------------------------------------
+echo [3/4] race: go test -race ./...
 set "CGO_ENABLED=1"
 go test -race ./... >"%WORK_DIR%\race.out" 2>&1
 if errorlevel 1 (
@@ -61,10 +66,12 @@ if errorlevel 1 (
     set "RACE_DETAILS=no data races detected"
 )
 set "CGO_ENABLED="
+echo       done: %RACE_RESULT%
 
 if "%SUITE%"=="unit" goto :report
 
 :integration
+echo [4/4] integration: live e2e checks against %API_BASE%
 curl -s -o nul -w "%%{http_code}" "%API_BASE%/healthz" >"%WORK_DIR%\code.txt" 2>nul
 set /p HEALTH_CODE=<"%WORK_DIR%\code.txt"
 if not "%HEALTH_CODE%"=="200" (

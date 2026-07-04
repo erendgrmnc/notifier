@@ -19,17 +19,26 @@ POLL_SECONDS=10
 # --- reporting helpers ------------------------------------------------------
 
 if [ -t 1 ]; then
-    GREEN="\033[32m"; RED="\033[31m"; YELLOW="\033[33m"; BOLD="\033[1m"; RESET="\033[0m"
+    ANIMATE=1
+    GREEN="\033[32m"; RED="\033[31m"; YELLOW="\033[33m"; BOLD="\033[1m"; DIM="\033[2m"; RESET="\033[0m"
 else
-    GREEN=""; RED=""; YELLOW=""; BOLD=""; RESET=""
+    ANIMATE=0
+    GREEN=""; RED=""; YELLOW=""; BOLD=""; DIM=""; RESET=""
 fi
 
 REPORT=""
 FAILED=0
 
+# record appends to the final table AND prints a live completion line, so
+# progress is visible the moment each suite finishes.
 record() { # name result duration details
     REPORT="${REPORT}${1}|${2}|${3}|${4}\n"
-    [ "$2" = "FAIL" ] && FAILED=1
+    case "$2" in
+        PASS) printf "  %b✓%b %-12s %b(%s)%b %s\n" "$GREEN" "$RESET" "$1" "$DIM" "$3" "$RESET" "$4" ;;
+        FAIL) printf "  %b✗%b %-12s %b(%s)%b %s\n" "$RED" "$RESET" "$1" "$DIM" "$3" "$RESET" "$4"; FAILED=1 ;;
+        SKIP) printf "  %b-%b %-12s %bskipped%b %s\n" "$YELLOW" "$RESET" "$1" "$DIM" "$RESET" "$4" ;;
+        *)    printf "  %b·%b %-12s %s\n" "$DIM" "$RESET" "$1" "$4" ;;
+    esac
 }
 
 colorize() {
@@ -46,6 +55,32 @@ now() { date +%s; }
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
+# run_step runs a command with its output captured, showing a spinner on
+# interactive terminals and a plain progress line otherwise.
+run_step() { # label outfile command...
+    step_label=$1
+    step_outfile=$2
+    shift 2
+
+    if [ "$ANIMATE" = "1" ]; then
+        "$@" >"$step_outfile" 2>&1 &
+        step_pid=$!
+        frames='|/-\'
+        frame_index=0
+        while kill -0 "$step_pid" 2>/dev/null; do
+            frame_index=$(( (frame_index % 4) + 1 ))
+            frame=$(printf '%s' "$frames" | cut -c"$frame_index")
+            printf "\r  %b%s%b %s" "$YELLOW" "$frame" "$RESET" "$step_label"
+            sleep 0.2 2>/dev/null || sleep 1
+        done
+        printf "\r\033[K"
+        wait "$step_pid"
+    else
+        echo "==> $step_label"
+        "$@" >"$step_outfile" 2>&1
+    fi
+}
+
 # --- unit suite ---------------------------------------------------------------
 
 UNIT_TESTS=0
@@ -54,7 +89,8 @@ LOWEST_COVER=""
 
 run_unit() {
     started=$(now)
-    if go test -json -coverprofile="$WORK_DIR/cover.out" ./... >"$WORK_DIR/unit.json" 2>&1; then
+    if run_step "unit: go test ./..." "$WORK_DIR/unit.json" \
+            go test -json -coverprofile="$WORK_DIR/cover.out" ./...; then
         UNIT_TESTS=$(grep -c '"Action":"pass".*"Test":"' "$WORK_DIR/unit.json" || true)
         packages=$(grep '"Action":"pass"' "$WORK_DIR/unit.json" | grep -cv '"Test":' || true)
         record "unit" "PASS" "$(($(now) - started))s" "${UNIT_TESTS} tests in ${packages} packages"
@@ -69,18 +105,19 @@ run_unit() {
         # Cached second run; prints one "coverage: N% of statements" line per
         # package. Field positions vary (cached, no-test-files), so locate
         # the percentage field instead of assuming a column.
-        LOWEST_COVER=$(go test -cover ./... 2>/dev/null \
-            | awk '/coverage:/ {
+        run_step "coverage: per-package breakdown" "$WORK_DIR/coverpkg.out" go test -cover ./...
+        LOWEST_COVER=$(awk '/coverage:/ {
                 pkg = ($1 == "ok") ? $2 : $1
                 for (i = 1; i <= NF; i++) if ($i ~ /%$/) { gsub("%", "", $i); print $i, pkg }
-            }' | sort -n | head -1)
+            }' "$WORK_DIR/coverpkg.out" | sort -n | head -1)
         record "coverage" "-" "-" "${COVER_TOTAL:-n/a} of statements"
     fi
 }
 
 run_race() {
     started=$(now)
-    if CGO_ENABLED=1 go test -race ./... >"$WORK_DIR/race.out" 2>&1; then
+    if run_step "race: go test -race ./..." "$WORK_DIR/race.out" \
+            env CGO_ENABLED=1 go test -race ./...; then
         record "race" "PASS" "$(($(now) - started))s" "no data races detected"
     elif grep -q "requires cgo\|C compiler" "$WORK_DIR/race.out"; then
         record "race" "SKIP" "-" "cgo/gcc unavailable on this machine; CI enforces -race"
@@ -91,7 +128,7 @@ run_race() {
 
 run_vet() {
     started=$(now)
-    if go vet ./... >"$WORK_DIR/vet.out" 2>&1; then
+    if run_step "vet: go vet ./..." "$WORK_DIR/vet.out" go vet ./...; then
         record "vet" "PASS" "$(($(now) - started))s" "no static-analysis issues"
     else
         record "vet" "FAIL" "$(($(now) - started))s" "$(head -1 "$WORK_DIR/vet.out")"
@@ -110,15 +147,22 @@ run_integration() {
         return
     fi
 
+    printf "  %b▶%b integration checks:\n" "$BOLD" "$RESET"
     checks=0; passed=0; failing=""
 
     check() { # name condition_result
         checks=$((checks + 1))
-        if [ "$2" = "0" ]; then passed=$((passed + 1)); else failing="${failing}${1}; "; fi
+        if [ "$2" = "0" ]; then
+            passed=$((passed + 1))
+            printf "      %b✓%b %s\n" "$GREEN" "$RESET" "$1"
+        else
+            failing="${failing}${1}; "
+            printf "      %b✗%b %s\n" "$RED" "$RESET" "$1"
+        fi
     }
 
     # 1. liveness
-    [ "$(http_code "$API_BASE/healthz")" = "200" ]; check "healthz" "$?"
+    [ "$(http_code "$API_BASE/healthz")" = "200" ]; check "healthz 200" "$?"
 
     # 2. create returns 201 and a queued/pending notification
     code=$(http_code -X POST "$API_BASE/api/v1/notifications" \
@@ -133,10 +177,14 @@ run_integration() {
     while [ "$elapsed" -lt "$POLL_SECONDS" ]; do
         http_code "$API_BASE/api/v1/notifications/$notification_id" >/dev/null
         if grep -q '"status":"sent"' "$WORK_DIR/body"; then delivered=0; break; fi
+        if [ "$ANIMATE" = "1" ]; then
+            printf "\r      %b|%b waiting for delivery (%ss)" "$YELLOW" "$RESET" "$elapsed"
+        fi
         sleep 1
         elapsed=$((elapsed + 1))
     done
-    check "delivered to sent within ${POLL_SECONDS}s" "$delivered"
+    [ "$ANIMATE" = "1" ] && printf "\r\033[K"
+    check "delivered to sent in ${elapsed}s" "$delivered"
 
     # 4. validation regression: bad recipient → 400 naming the field
     code=$(http_code -X POST "$API_BASE/api/v1/notifications" \
@@ -156,6 +204,8 @@ run_integration() {
 }
 
 # --- execute ------------------------------------------------------------------
+
+printf "%b\n" "${BOLD}Running suite: ${SUITE}${RESET}"
 
 case "$SUITE" in
     all)         run_vet; run_unit; run_race; run_integration ;;
