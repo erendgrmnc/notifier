@@ -149,9 +149,17 @@
 
   .empty { color: var(--dim); font-style: italic; font-size: 12px; padding: 6px 0; }
 
+  /* ---- bottom row: clients + live stream side by side ---- */
+  .bottom-row { display: flex; gap: 14px; flex: 0 0 340px; min-height: 0; }
+  .bottom-row > .panel { min-width: 0; }
+  .clients-panel { flex: 1.2; }
+  .stream-panel { flex: 1; }
+  .stream-panel .row { flex-shrink: 0; }
+  .stream-panel #ws-feed { flex: 1; min-height: 0; margin-top: 8px; }
+  @media (max-width: 1100px) { .bottom-row { flex-direction: column; flex-basis: auto; } }
+
   /* ---- client devices ---- */
-  .clients-panel { flex: 0 0 340px; }
-  .devices { display: grid; grid-template-columns: 190px minmax(280px, 520px); gap: 26px;
+  .devices { display: grid; grid-template-columns: 170px minmax(220px, 1fr); gap: 20px;
     justify-content: center; flex: 1; min-height: 0; }
   .devices > div { display: flex; flex-direction: column; min-height: 0; }
   .device-label { text-align: center; font: 9.5px var(--mono); color: var(--dim);
@@ -207,7 +215,7 @@
   @media (prefers-reduced-motion: reduce) {
     .sms-bubble.new, .push-banner.new, .mail-row.new { animation: none; }
   }
-  @media (max-width: 1100px) { .clients-panel { flex-basis: auto; height: 300px; } }
+  @media (max-width: 1100px) { .clients-panel, .stream-panel { flex-basis: auto; height: 300px; } }
 
   /* ---- pipeline metrics ---- */
   .sources { font-size: 9px; letter-spacing: .08em; color: var(--dim); text-transform: none; }
@@ -319,21 +327,34 @@
         </table>
       </div>
     </div>
-    <div class="panel clients-panel">
-      <h2>Clients — live devices</h2>
-      <div class="devices">
-        <div>
-          <div class="phone"><div class="phone-screen" id="phone-screen"></div></div>
-          <div class="device-label">mobile · sms &amp; push</div>
-        </div>
-        <div class="desktop">
-          <div class="monitor">
-            <div class="mail-header"><span class="traffic">●●●</span> INBOX — EMAIL</div>
-            <div class="mail-rows" id="mail-rows"></div>
+    <div class="bottom-row">
+      <div class="panel clients-panel">
+        <h2>Clients — live devices</h2>
+        <div class="devices">
+          <div>
+            <div class="phone"><div class="phone-screen" id="phone-screen"></div></div>
+            <div class="device-label">mobile · sms &amp; push</div>
           </div>
-          <div class="monitor-stand"></div>
-          <div class="monitor-base"></div>
-          <div class="device-label">desktop · email</div>
+          <div class="desktop">
+            <div class="monitor">
+              <div class="mail-header"><span class="traffic">●●●</span> INBOX — EMAIL</div>
+              <div class="mail-rows" id="mail-rows"></div>
+            </div>
+            <div class="monitor-stand"></div>
+            <div class="monitor-base"></div>
+            <div class="device-label">desktop · email</div>
+          </div>
+        </div>
+      </div>
+      <div class="panel stream-panel">
+        <h2>Live stream — /ws</h2>
+        <div id="ws-connections"></div>
+        <div class="row">
+          <input id="ws-filter" placeholder="notification id (optional filter)" style="flex:1"/>
+          <button onclick="addWsFromInput()">Connect</button>
+        </div>
+        <div id="ws-feed" class="scroll">
+          <p class="empty">status events appear here as they happen</p>
         </div>
       </div>
     </div>
@@ -386,17 +407,6 @@
       </div>
       <p class="hint"><code>FAILME</code> in content simulates a provider outage (retries); <code>REJECTME</code> a permanent rejection (dead letter).</p>
       <p class="hint" id="send-result"></p>
-    </div>
-    <div class="panel">
-      <h2>Live stream — /ws</h2>
-      <div id="ws-connections"></div>
-      <div class="row">
-        <input id="ws-filter" placeholder="notification id (optional filter)" style="flex:1"/>
-        <button onclick="addWsFromInput()">Connect</button>
-      </div>
-      <div id="ws-feed" class="scroll" style="max-height:130px;margin-top:8px">
-        <p class="empty">status events appear here as they happen</p>
-      </div>
     </div>
     <div class="panel fill">
       <h2>Templates</h2>
