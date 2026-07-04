@@ -32,6 +32,12 @@ type Clock interface {
 	Now() time.Time
 }
 
+// outcomeWriteTimeout bounds the persistence of a delivery outcome. The
+// write runs on a detached context: once the provider accepted (or
+// definitively rejected) the message, the result must be recorded even
+// if shutdown cancelled the consumer context mid-flight.
+const outcomeWriteTimeout = 5 * time.Second
+
 // Worker processes queued notifications.
 type Worker struct {
 	repo   Repository
@@ -77,17 +83,23 @@ func (worker *Worker) processNotification(ctx context.Context, id uuid.UUID) err
 	}
 
 	providerMessageID, err := worker.sender.Send(ctx, notification)
+
+	// The send is irreversible; its outcome is written on a detached
+	// context so shutdown cannot lose what actually happened.
+	outcomeCtx, cancelOutcome := context.WithTimeout(context.WithoutCancel(ctx), outcomeWriteTimeout)
+	defer cancelOutcome()
+
 	if err != nil {
 		// Interim failure handling: retry tiers and error
 		// classification arrive with the delivery provider phase.
 		logger.Error("delivery failed", slog.Any("error", err))
-		if err := worker.repo.UpdateStatus(ctx, id, domain.StatusFailed, domain.StatusProcessing); err != nil {
+		if err := worker.repo.UpdateStatus(outcomeCtx, id, domain.StatusFailed, domain.StatusProcessing); err != nil {
 			return fmt.Errorf("mark failed: %w", err)
 		}
 		return nil
 	}
 
-	if err := worker.repo.MarkSent(ctx, id, providerMessageID, worker.clock.Now()); err != nil {
+	if err := worker.repo.MarkSent(outcomeCtx, id, providerMessageID, worker.clock.Now()); err != nil {
 		if errors.Is(err, domain.ErrInvalidTransition) {
 			logger.Warn("sent notification changed status concurrently")
 			return nil

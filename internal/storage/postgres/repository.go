@@ -90,10 +90,18 @@ func (repo *NotificationRepository) UpdateStatus(ctx context.Context, id uuid.UU
 		return fmt.Errorf("update notification %s status: %w", id, err)
 	}
 	if tag.RowsAffected() == 0 {
-		if _, err := repo.GetByID(ctx, id); errors.Is(err, domain.ErrNotFound) {
+		// Distinguish missing row from guard rejection. A failed lookup
+		// must surface as an infrastructure error — misreporting it as
+		// ErrInvalidTransition would make callers settle (ack) the work.
+		_, lookupErr := repo.GetByID(ctx, id)
+		switch {
+		case errors.Is(lookupErr, domain.ErrNotFound):
 			return domain.ErrNotFound
+		case lookupErr != nil:
+			return fmt.Errorf("disambiguate rejected status update for %s: %w", id, lookupErr)
+		default:
+			return domain.ErrInvalidTransition
 		}
-		return domain.ErrInvalidTransition
 	}
 	return nil
 }
