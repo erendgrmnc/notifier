@@ -145,15 +145,65 @@
   .chip.queued, .chip.pending, .chip.scheduled { color: var(--info); background: rgba(110,168,255,.12); }
   .err-text { color: var(--fail); font-size: 10.5px; }
 
-  /* ---- client inboxes ---- */
-  .client { border: 1px solid var(--edge); border-radius: 8px; background: var(--panel-2); padding: 9px 11px; margin-bottom: 10px; }
-  .client .who { font: 11px var(--mono); color: var(--dim); margin-bottom: 4px; }
-  .msg { border-radius: 7px; padding: 6px 9px; margin-top: 6px; font-size: 12px; }
-  .msg .meta { color: var(--dim); font: 10px var(--mono); margin-top: 3px; }
-  .msg.sms   { background: #14352a; border-radius: 12px 12px 12px 3px; }
-  .msg.email { background: #1a2a4a; border-left: 3px solid var(--info); }
-  .msg.push  { background: #33270f; border: 1px solid rgba(255,180,84,.3); }
   .empty { color: var(--dim); font-style: italic; font-size: 12px; padding: 6px 0; }
+
+  /* ---- client devices ---- */
+  .clients-panel { flex: 0 0 290px; }
+  .devices { display: grid; grid-template-columns: 185px 1fr; gap: 18px; flex: 1; min-height: 0; }
+  .device-label { text-align: center; font: 9.5px var(--mono); color: var(--dim);
+    letter-spacing: .14em; text-transform: uppercase; margin-top: 7px; }
+
+  /* phone: sms bubbles + push banners */
+  .phone { position: relative; border: 2px solid var(--edge); border-radius: 24px;
+    background: #0b0f19; padding: 24px 10px 16px; height: 100%;
+    box-shadow: inset 0 0 26px rgba(110,168,255,.06); }
+  .phone::before { content: ""; position: absolute; top: 9px; left: 50%; transform: translateX(-50%);
+    width: 52px; height: 5px; border-radius: 3px; background: var(--edge); }
+  .phone::after { content: ""; position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%);
+    width: 56px; height: 4px; border-radius: 2px; background: var(--edge); }
+  .phone-screen { height: 100%; overflow: hidden; display: flex; flex-direction: column; gap: 6px; }
+  .phone-idle { margin: auto; text-align: center; color: var(--dim); }
+  .phone-idle .clock { font: 300 26px var(--mono); color: var(--paper); letter-spacing: .04em; }
+  .phone-idle .note { font-size: 9.5px; margin-top: 4px; }
+  .push-banner { background: rgba(255,180,84,.10); border: 1px solid rgba(255,180,84,.35);
+    border-radius: 10px; padding: 5px 9px; font-size: 10.5px; flex-shrink: 0; }
+  .push-banner .app { color: var(--signal); font: 600 8.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+  .sms-thread { margin-top: auto; display: flex; flex-direction: column; gap: 5px; }
+  .sms-bubble { align-self: flex-start; background: #1c4634; border-radius: 12px 12px 12px 3px;
+    padding: 5px 9px; font-size: 11px; max-width: 92%; overflow-wrap: break-word; }
+  .sms-bubble .t { display: block; color: rgba(233,237,246,.45); font: 8.5px var(--mono); margin-top: 2px; }
+
+  /* desktop: email inbox */
+  .desktop { display: flex; flex-direction: column; height: 100%; min-width: 0; }
+  .monitor { flex: 1; border: 2px solid var(--edge); border-radius: 10px; background: #0b0f19;
+    overflow: hidden; display: flex; flex-direction: column; min-height: 0;
+    box-shadow: inset 0 0 30px rgba(110,168,255,.05); }
+  .mail-header { padding: 6px 11px; border-bottom: 1px solid var(--edge);
+    font: 600 9.5px var(--mono); color: var(--dim); letter-spacing: .12em; display: flex; gap: 6px; }
+  .mail-header .traffic { color: var(--edge); letter-spacing: 2px; }
+  .mail-rows { flex: 1; overflow: hidden; }
+  .mail-row { display: flex; gap: 8px; padding: 6px 11px; align-items: baseline;
+    border-bottom: 1px solid rgba(38,50,82,.4); font-size: 11px; min-width: 0; }
+  .mail-row .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--info); flex-shrink: 0; align-self: center; }
+  .mail-row .from { color: var(--dim); font: 10px var(--mono); flex-shrink: 0; }
+  .mail-row .subj { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .mail-row .t { margin-left: auto; color: var(--dim); font: 9px var(--mono); flex-shrink: 0; }
+  .mail-empty { margin: auto; text-align: center; color: var(--dim); font-size: 11px; }
+  .monitor-stand { width: 64px; height: 13px; margin: 0 auto; background: var(--edge);
+    clip-path: polygon(22% 0, 78% 0, 100% 100%, 0 100%); }
+  .monitor-base { width: 110px; height: 4px; margin: 0 auto; background: var(--edge); border-radius: 2px; }
+
+  /* arrival animations: only elements carrying .new animate */
+  @keyframes bubble-in { from { opacity: 0; transform: translateY(10px) scale(.9); } }
+  @keyframes banner-in { from { opacity: 0; transform: translateY(-12px); } }
+  @keyframes mail-in { from { opacity: 0; transform: translateX(-12px); background: rgba(110,168,255,.18); } }
+  .sms-bubble.new { animation: bubble-in .45s cubic-bezier(.2,.9,.3,1.15); }
+  .push-banner.new { animation: banner-in .4s ease-out; }
+  .mail-row.new { animation: mail-in .5s ease-out; }
+  @media (prefers-reduced-motion: reduce) {
+    .sms-bubble.new, .push-banner.new, .mail-row.new { animation: none; }
+  }
+  @media (max-width: 1100px) { .clients-panel { flex-basis: auto; height: 300px; } }
 
   /* ---- pipeline metrics ---- */
   .sources { font-size: 9px; letter-spacing: .08em; color: var(--dim); text-transform: none; }
@@ -246,6 +296,24 @@
         </table>
       </div>
     </div>
+    <div class="panel clients-panel">
+      <h2>Clients — live devices</h2>
+      <div class="devices">
+        <div>
+          <div class="phone"><div class="phone-screen" id="phone-screen"></div></div>
+          <div class="device-label">mobile · sms &amp; push</div>
+        </div>
+        <div class="desktop">
+          <div class="monitor">
+            <div class="mail-header"><span class="traffic">●●●</span> INBOX — EMAIL</div>
+            <div class="mail-rows" id="mail-rows"></div>
+          </div>
+          <div class="monitor-stand"></div>
+          <div class="monitor-base"></div>
+          <div class="device-label">desktop · email</div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- right: send + clients -->
@@ -296,9 +364,9 @@
       <p class="hint"><code>FAILME</code> in content simulates a provider outage (retries); <code>REJECTME</code> a permanent rejection (dead letter).</p>
       <p class="hint" id="send-result"></p>
     </div>
-    <div class="panel">
+    <div class="panel fill">
       <h2>Templates</h2>
-      <div id="template-list" class="scroll" style="max-height:110px"><p class="empty">none yet</p></div>
+      <div id="template-list" class="scroll" style="max-height:150px"><p class="empty">none yet</p></div>
       <details id="template-create">
         <summary class="hint" style="cursor:pointer">create template…</summary>
         <label for="new-template-name">Name</label>
@@ -312,10 +380,6 @@
         <div class="row"><button class="primary" onclick="createTemplate()">Create</button></div>
         <p class="hint" id="template-result"></p>
       </details>
-    </div>
-    <div class="panel fill">
-      <h2>Clients</h2>
-      <div id="clients" class="scroll"><p class="empty">nothing delivered yet</p></div>
     </div>
   </div>
 </div>
@@ -993,22 +1057,51 @@ function renderNotifications(rows) {
   }).join("");
 }
 
+// Arrival animations must fire once per message, not on every 1s poll:
+// ids seen in a previous render carry no .new class.
+const seenDeviceMessages = new Set();
+
 function renderClients(messages) {
-  const container = document.getElementById("clients");
   document.getElementById("strip-delivered").textContent = messages.length >= 200 ? "200+" : messages.length;
-  if (!messages.length) { container.innerHTML = '<p class="empty">nothing delivered yet</p>'; return; }
-  const byRecipient = new Map();
-  for (const message of messages) {
-    if (!byRecipient.has(message.to)) byRecipient.set(message.to, []);
-    byRecipient.get(message.to).push(message);
+
+  const newClass = message => seenDeviceMessages.has(message.message_id) ? "" : " new";
+  const clock = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+  // Phone: push banners pinned top (newest first), sms thread bottom
+  // (oldest of the visible window on top, like a real conversation).
+  const pushes = messages.filter(m => m.channel === "push").slice(0, 2);
+  const smses = messages.filter(m => m.channel === "sms").slice(0, 4).reverse();
+  const phone = document.getElementById("phone-screen");
+  if (!pushes.length && !smses.length) {
+    phone.innerHTML = `<div class="phone-idle"><div class="clock">${clock}</div><div class="note">no messages</div></div>`;
+  } else {
+    phone.innerHTML =
+      pushes.map(message =>
+        `<div class="push-banner${newClass(message)}"><span class="app">notifier · push</span><br>` +
+        `${escapeHTML(message.content.slice(0, 70))}</div>`
+      ).join("") +
+      `<div class="sms-thread">` +
+      smses.map(message =>
+        `<div class="sms-bubble${newClass(message)}">${escapeHTML(message.content.slice(0, 80))}` +
+        `<span class="t">${new Date(message.received_at).toLocaleTimeString()}</span></div>`
+      ).join("") + `</div>`;
   }
-  container.innerHTML = [...byRecipient.entries()].slice(0, 4).map(([recipient, inbox]) =>
-    `<div class="client"><div class="who">📥 ${escapeHTML(recipient)} · ${inbox.length}</div>` +
-    inbox.slice(0, 5).map(message =>
-      `<div class="msg ${message.channel}">${escapeHTML(message.content)}` +
-      `<div class="meta">${message.channel} · ${new Date(message.received_at).toLocaleTimeString()}</div></div>`
-    ).join("") + `</div>`
-  ).join("");
+
+  // Desktop: inbox rows, newest on top.
+  const emails = messages.filter(m => m.channel === "email").slice(0, 5);
+  const mailRows = document.getElementById("mail-rows");
+  if (!emails.length) {
+    mailRows.innerHTML = `<div class="mail-empty">📭 inbox zero</div>`;
+  } else {
+    mailRows.innerHTML = emails.map(message =>
+      `<div class="mail-row${newClass(message)}"><span class="dot"></span>` +
+      `<span class="from">${escapeHTML(message.to.slice(0, 14))}</span>` +
+      `<span class="subj">${escapeHTML(message.content.slice(0, 60))}</span>` +
+      `<span class="t">${new Date(message.received_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span></div>`
+    ).join("");
+  }
+
+  for (const message of messages) seenDeviceMessages.add(message.message_id);
 }
 
 function sumValues(rows, predicate) {
