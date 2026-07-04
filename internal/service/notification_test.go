@@ -99,6 +99,18 @@ func (publisher *fakePublisher) PublishEvent(_ context.Context, event rabbit.Sta
 	return nil
 }
 
+func (publisher *fakePublisher) PublishCreatedAll(ctx context.Context, notifications []domain.Notification) ([]uuid.UUID, error) {
+	if publisher.failure != nil {
+		return nil, publisher.failure
+	}
+	var confirmed []uuid.UUID
+	for _, notification := range notifications {
+		publisher.published = append(publisher.published, notification)
+		confirmed = append(confirmed, notification.ID)
+	}
+	return confirmed, nil
+}
+
 func (publisher *fakePublisher) PublishCreated(_ context.Context, notification domain.Notification) error {
 	if publisher.failure != nil {
 		return publisher.failure

@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 
 	"notifier/internal/domain"
+	"notifier/internal/observability"
 )
 
 // MaxBatchSize is the assessment's batch ceiling.
@@ -18,6 +20,7 @@ const MaxBatchSize = 1000
 type BatchRepository interface {
 	CreateBatch(ctx context.Context, notifications []domain.Notification) error
 	ExistingIdempotencyKeys(ctx context.Context, keys []string) (map[string]uuid.UUID, error)
+	MarkQueuedBulk(ctx context.Context, ids []uuid.UUID) error
 }
 
 // BatchItemStatus classifies one item's outcome in a batch request.
@@ -66,11 +69,15 @@ func (svc *NotificationService) CreateBatch(ctx context.Context, inputs []Create
 		return BatchResult{}, err
 	}
 
+	// One resolver per batch: each referenced template is fetched and
+	// compiled once regardless of how many items use it.
+	resolver := newTemplateResolver(svc.templateRepo)
+
 	var toInsert []domain.Notification
 	for index, input := range inputs {
 		itemResult := BatchItemResult{Index: index, Status: BatchItemAccepted}
 
-		content, err := svc.resolveContent(ctx, input)
+		content, err := svc.resolveContent(ctx, resolver, input)
 		if err != nil {
 			var validationErrs domain.ValidationErrors
 			if !errors.As(err, &validationErrs) {
@@ -127,15 +134,40 @@ func (svc *NotificationService) CreateBatch(ctx context.Context, inputs []Create
 	}
 
 	// Publish after commit, never inside the transaction — a rollback
-	// must not leave phantom messages. Failures leave rows pending for
-	// sweeper recovery, mirroring single-create semantics.
+	// must not leave phantom messages. The whole burst publishes under
+	// one lock with one collective confirm wait, then flips to queued in
+	// a single UPDATE; unconfirmed rows stay pending for the sweeper.
+	var toPublish []domain.Notification
 	for index := range result.Results {
 		itemResult := &result.Results[index]
-		if itemResult.Status != BatchItemAccepted || itemResult.Notification.Status != domain.StatusPending {
+		if itemResult.Status == BatchItemAccepted && itemResult.Notification.Status == domain.StatusPending {
+			toPublish = append(toPublish, *itemResult.Notification)
+		}
+	}
+
+	confirmed, err := svc.publisher.PublishCreatedAll(ctx, toPublish)
+	if err != nil {
+		observability.LoggerFrom(ctx, svc.logger).Warn("batch publish failed; rows stay pending for sweeper", slog.Any("error", err))
+		return result, nil
+	}
+	if err := svc.batchRepo.MarkQueuedBulk(ctx, confirmed); err != nil {
+		observability.LoggerFrom(ctx, svc.logger).Warn("bulk queued mark failed", slog.Any("error", err))
+		return result, nil
+	}
+
+	confirmedSet := make(map[uuid.UUID]struct{}, len(confirmed))
+	for _, id := range confirmed {
+		confirmedSet[id] = struct{}{}
+	}
+	for index := range result.Results {
+		itemResult := &result.Results[index]
+		if itemResult.Notification == nil {
 			continue
 		}
-		published := svc.publishForDelivery(ctx, *itemResult.Notification)
-		itemResult.Notification = &published
+		if _, ok := confirmedSet[itemResult.Notification.ID]; ok {
+			itemResult.Notification.Status = domain.StatusQueued
+			svc.emitEvent(ctx, *itemResult.Notification, domain.StatusQueued)
+		}
 	}
 
 	return result, nil

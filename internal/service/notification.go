@@ -37,6 +37,7 @@ const (
 // status events for live listeners.
 type Publisher interface {
 	PublishCreated(ctx context.Context, notification domain.Notification) error
+	PublishCreatedAll(ctx context.Context, notifications []domain.Notification) ([]uuid.UUID, error)
 	PublishEvent(ctx context.Context, event rabbit.StatusEvent) error
 }
 
@@ -69,8 +70,8 @@ func NewNotificationService(repo Repository, batchRepo BatchRepository, template
 }
 
 // resolveContent enforces exactly one of content|template and renders
-// template references into final content.
-func (svc *NotificationService) resolveContent(ctx context.Context, input CreateInput) (string, error) {
+// template references into final content via the resolver's cache.
+func (svc *NotificationService) resolveContent(ctx context.Context, resolver *templateResolver, input CreateInput) (string, error) {
 	switch {
 	case input.Template != nil && input.Content != "":
 		return "", domain.ValidationErrors{{Field: "content", Message: "provide either content or template, not both"}}
@@ -79,7 +80,7 @@ func (svc *NotificationService) resolveContent(ctx context.Context, input Create
 	case svc.templateRepo == nil:
 		return "", domain.ValidationErrors{{Field: "template", Message: "templates are not available"}}
 	default:
-		return renderTemplateContent(ctx, svc.templateRepo, *input.Template, input.Channel)
+		return resolver.render(ctx, *input.Template, input.Channel)
 	}
 }
 
@@ -156,7 +157,7 @@ type CreateResult struct {
 func (svc *NotificationService) Create(ctx context.Context, input CreateInput) (CreateResult, error) {
 	now := svc.clock.Now()
 
-	content, err := svc.resolveContent(ctx, input)
+	content, err := svc.resolveContent(ctx, newTemplateResolver(svc.templateRepo), input)
 	if err != nil {
 		return CreateResult{}, err
 	}

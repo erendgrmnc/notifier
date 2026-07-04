@@ -140,6 +140,21 @@ func (repo *NotificationRepository) CreateBatch(ctx context.Context, notificatio
 	return nil
 }
 
+// MarkQueuedBulk transitions many pending rows to queued in one
+// statement — the batch path's counterpart to the per-row guarded update.
+func (repo *NotificationRepository) MarkQueuedBulk(ctx context.Context, ids []uuid.UUID) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	_, err := repo.pool.Exec(ctx,
+		`UPDATE notifications SET status = 'queued', updated_at = now()
+		 WHERE id = ANY($1) AND status = 'pending'`, ids)
+	if err != nil {
+		return fmt.Errorf("bulk mark queued: %w", err)
+	}
+	return nil
+}
+
 // ExistingIdempotencyKeys returns which of the given keys already have
 // notifications, so batch creation can report duplicates per item
 // instead of failing the whole COPY.

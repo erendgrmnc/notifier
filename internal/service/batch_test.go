@@ -25,6 +25,16 @@ func (repo *fakeBatchRepository) CreateBatch(_ context.Context, notifications []
 	return nil
 }
 
+func (repo *fakeBatchRepository) MarkQueuedBulk(_ context.Context, ids []uuid.UUID) error {
+	for _, id := range ids {
+		if notification, ok := repo.stored[id]; ok && notification.Status == domain.StatusPending {
+			notification.Status = domain.StatusQueued
+			repo.stored[id] = notification
+		}
+	}
+	return nil
+}
+
 func (repo *fakeBatchRepository) ExistingIdempotencyKeys(_ context.Context, keys []string) (map[string]uuid.UUID, error) {
 	existing := map[string]uuid.UUID{}
 	for _, key := range keys {

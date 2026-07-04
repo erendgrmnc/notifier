@@ -77,13 +77,35 @@ func (svc *TemplateService) List(ctx context.Context) ([]domain.Template, error)
 	return templates, nil
 }
 
-// renderTemplateContent resolves a template reference into final content
-// for notification creation. Every failure is a client error: unknown
-// template, channel mismatch, or missing variables.
-func renderTemplateContent(ctx context.Context, repo TemplateRepository, ref TemplateRef, channel domain.Channel) (string, error) {
-	stored, err := repo.GetTemplateByName(ctx, ref.Name)
-	if err != nil {
-		return "", domain.ValidationErrors{{Field: "template.name", Message: fmt.Sprintf("template %q not found", ref.Name)}}
+// templateResolver renders template references, caching the fetched
+// template and its compiled form so a 1000-item batch referencing one
+// template costs one SELECT and one parse, not a thousand.
+type templateResolver struct {
+	repo      TemplateRepository
+	templates map[string]domain.Template
+	compiled  map[string]template.Parsed
+}
+
+func newTemplateResolver(repo TemplateRepository) *templateResolver {
+	return &templateResolver{
+		repo:      repo,
+		templates: map[string]domain.Template{},
+		compiled:  map[string]template.Parsed{},
+	}
+}
+
+// render resolves a template reference into final content. Every failure
+// is a client error: unknown template, channel mismatch, or missing
+// variables.
+func (resolver *templateResolver) render(ctx context.Context, ref TemplateRef, channel domain.Channel) (string, error) {
+	stored, cached := resolver.templates[ref.Name]
+	if !cached {
+		loaded, err := resolver.repo.GetTemplateByName(ctx, ref.Name)
+		if err != nil {
+			return "", domain.ValidationErrors{{Field: "template.name", Message: fmt.Sprintf("template %q not found", ref.Name)}}
+		}
+		resolver.templates[ref.Name] = loaded
+		stored = loaded
 	}
 	if stored.Channel != channel {
 		return "", domain.ValidationErrors{{
@@ -92,7 +114,17 @@ func renderTemplateContent(ctx context.Context, repo TemplateRepository, ref Tem
 		}}
 	}
 
-	rendered, err := template.Render(stored.Body, ref.Vars)
+	compiled, cached := resolver.compiled[ref.Name]
+	if !cached {
+		parsed, err := template.Parse(stored.Body)
+		if err != nil {
+			return "", domain.ValidationErrors{{Field: "template.name", Message: err.Error()}}
+		}
+		resolver.compiled[ref.Name] = parsed
+		compiled = parsed
+	}
+
+	rendered, err := compiled.Render(ref.Vars)
 	if err != nil {
 		return "", domain.ValidationErrors{{Field: "template.vars", Message: err.Error()}}
 	}
