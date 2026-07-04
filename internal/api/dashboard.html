@@ -258,11 +258,30 @@
       <select id="channel" onchange="placeholderRecipient()">
         <option value="sms">sms</option><option value="email">email</option><option value="push">push</option>
       </select>
-      <label for="content">Content</label>
-      <textarea id="content">Hello from the dashboard!</textarea>
+      <label for="send-mode">Message</label>
+      <select id="send-mode" onchange="toggleSendMode()">
+        <option value="content" selected>write content</option>
+        <option value="template">use template</option>
+      </select>
+      <div id="content-mode">
+        <label for="content">Content</label>
+        <textarea id="content">Hello from the dashboard!</textarea>
+      </div>
+      <div id="template-mode" hidden>
+        <label for="template-select">Template</label>
+        <select id="template-select" onchange="renderTemplateVars()"></select>
+        <div id="template-vars"></div>
+      </div>
       <label for="priority">Priority</label>
       <select id="priority">
         <option value="high">high</option><option value="normal" selected>normal</option><option value="low">low</option>
+      </select>
+      <label for="deliver-at">Deliver</label>
+      <select id="deliver-at">
+        <option value="0" selected>now</option>
+        <option value="10">in 10 seconds</option>
+        <option value="30">in 30 seconds</option>
+        <option value="120">in 2 minutes</option>
       </select>
       <div class="row">
         <button class="primary" onclick="sendBurst(1)">Send 1</button>
@@ -276,6 +295,23 @@
       </div>
       <p class="hint"><code>FAILME</code> in content simulates a provider outage (retries); <code>REJECTME</code> a permanent rejection (dead letter).</p>
       <p class="hint" id="send-result"></p>
+    </div>
+    <div class="panel">
+      <h2>Templates</h2>
+      <div id="template-list" class="scroll" style="max-height:110px"><p class="empty">none yet</p></div>
+      <details id="template-create">
+        <summary class="hint" style="cursor:pointer">create template…</summary>
+        <label for="new-template-name">Name</label>
+        <input id="new-template-name" placeholder="otp-code"/>
+        <label for="new-template-channel">Channel</label>
+        <select id="new-template-channel">
+          <option value="sms">sms</option><option value="email">email</option><option value="push">push</option>
+        </select>
+        <label for="new-template-body">Body</label>
+        <textarea id="new-template-body" placeholder="Your code is {{.code}}"></textarea>
+        <div class="row"><button class="primary" onclick="createTemplate()">Create</button></div>
+        <p class="hint" id="template-result"></p>
+      </details>
     </div>
     <div class="panel fill">
       <h2>Clients</h2>
@@ -335,6 +371,8 @@ function wirePreview(raw) {
     }
   }
   if (parsed && Array.isArray(parsed.notifications)) interesting.items = parsed.notifications.length;
+  if (parsed && parsed.template && parsed.template.name) interesting.template = parsed.template.name;
+  if (parsed && parsed.name && parsed.body) interesting.name = parsed.name;
   if (parsed && Array.isArray(parsed.results)) interesting.results = parsed.results.map(r => r.status).join(",");
   if (parsed && parsed.content) interesting.content = String(parsed.content).slice(0, 24);
   const parts = Object.entries(interesting).map(([key, value]) => {
@@ -607,6 +645,77 @@ const scenarios = [
     },
   },
   {
+    id: "scheduled",
+    title: "scheduled delivery",
+    proves: "A notification with scheduled_at waits as scheduled — still cancellable — and fires through the pipeline at its due time.",
+    run: async step => {
+      const fireInMs = 6000;
+      const created = await step("schedule for +6s", async () => {
+        const { status, body } = await post("/api/v1/notifications", {
+          recipient: "+905551234567", channel: "sms",
+          content: "scheduled scenario " + stamp(),
+          scheduled_at: new Date(Date.now() + fireInMs).toISOString(),
+        });
+        expect(status === 201 && body.status === "scheduled", "not scheduled: " + body.status);
+        return body;
+      });
+      const createdAt = Date.now();
+      await step("still waiting after 2s", async () => {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        const current = await getNotification(created.id);
+        expect(current.status === "scheduled", "fired early: " + current.status);
+      });
+      await step("fires at due time", async () => {
+        await pollUntil(async () => (await getNotification(created.id)).status === "sent" || null, 20000);
+        const elapsed = (Date.now() - createdAt) / 1000;
+        expect(elapsed >= 4.5, "delivered suspiciously early: " + elapsed.toFixed(1) + "s");
+        return "sent after " + elapsed.toFixed(1) + "s";
+      });
+    },
+  },
+  {
+    id: "template",
+    title: "template rendering",
+    proves: "Templates render variables into final content at enqueue; a missing variable is rejected before anything is created.",
+    run: async step => {
+      const name = "scen-tpl-" + stamp();
+      await step("create template", async () => {
+        const { status } = await post("/api/v1/templates", {
+          name, channel: "sms", body: "Code {{.code}} for {{.user}}",
+        });
+        expect(status === 201, "create failed: " + status);
+        return name;
+      });
+      await step("duplicate name conflicts (409)", async () => {
+        const { status } = await post("/api/v1/templates", { name, channel: "sms", body: "x" });
+        expect(status === 409, "expected 409, got " + status);
+      });
+      const created = await step("send with vars", async () => {
+        const { status, body } = await post("/api/v1/notifications", {
+          recipient: "+905551234567", channel: "sms",
+          template: { name, vars: { code: "424242", user: "eren" } },
+        });
+        expect(status === 201, "create from template failed: " + status);
+        expect(body.content === "Code 424242 for eren", "rendered wrong: " + body.content);
+        return body;
+      });
+      await step("missing variable rejected (400)", async () => {
+        const { status, body } = await post("/api/v1/notifications", {
+          recipient: "+905551234567", channel: "sms",
+          template: { name, vars: { code: "1" } },
+        });
+        expect(status === 400, "expected 400, got " + status);
+        expect((body.fields || []).some(f => f.field === "template.vars"), "wrong field: " + JSON.stringify(body.fields));
+      });
+      await step("rendered content reaches the client", async () => {
+        await pollUntil(async () => (await getNotification(created.id)).status === "sent" || null, 10000);
+        const inbox = await apiOK("/api/v1/provider/messages", undefined, true);
+        expect((inbox.messages || []).some(m => m.content === "Code 424242 for eren"),
+          "rendered message not in inbox");
+      });
+    },
+  },
+  {
     id: "batch",
     title: "batch partial success",
     proves: "One request creates many: valid items proceed, invalid ones are rejected per index, duplicate keys point at the original.",
@@ -697,7 +806,101 @@ function setControlsDisabled(disabled) {
   document.querySelectorAll(".scenario button, .row button").forEach(button => { button.disabled = disabled; });
 }
 
+/* ---------- templates ---------- */
+let knownTemplates = [];
+
+function toggleSendMode() {
+  const useTemplate = document.getElementById("send-mode").value === "template";
+  document.getElementById("content-mode").hidden = useTemplate;
+  document.getElementById("template-mode").hidden = !useTemplate;
+  if (useTemplate) renderTemplateVars();
+}
+
+function renderTemplateList() {
+  const container = document.getElementById("template-list");
+  if (!knownTemplates.length) { container.innerHTML = '<p class="empty">none yet</p>'; return; }
+  container.innerHTML = knownTemplates.map(template =>
+    `<div class="metric-row" title="${escapeHTML(template.body)}">` +
+    `<span class="k">${escapeHTML(template.name)}</span><span class="v">${template.channel}</span></div>`
+  ).join("");
+
+  const select = document.getElementById("template-select");
+  const current = select.value;
+  select.innerHTML = knownTemplates.map(template =>
+    `<option value="${escapeHTML(template.name)}">${escapeHTML(template.name)} (${template.channel})</option>`
+  ).join("");
+  if (knownTemplates.some(template => template.name === current)) select.value = current;
+}
+
+// Generate one input per {{.variable}} in the selected template's body.
+function renderTemplateVars() {
+  const selected = knownTemplates.find(template => template.name === document.getElementById("template-select").value);
+  const container = document.getElementById("template-vars");
+  if (!selected) { container.innerHTML = '<p class="hint">no templates — create one below</p>'; return; }
+
+  const variables = [...new Set([...selected.body.matchAll(/{{\s*\.(\w+)\s*}}/g)].map(match => match[1]))];
+  container.innerHTML = variables.map(variable =>
+    `<label for="tvar-${variable}">var: ${escapeHTML(variable)}</label>` +
+    `<input id="tvar-${variable}" data-template-var="${escapeHTML(variable)}" placeholder="${escapeHTML(variable)}"/>`
+  ).join("") || '<p class="hint">template has no variables</p>';
+  // Match the send channel to the template's channel automatically.
+  document.getElementById("channel").value = selected.channel;
+  placeholderRecipient();
+}
+
+function collectTemplateRef() {
+  const name = document.getElementById("template-select").value;
+  const vars = {};
+  document.querySelectorAll("[data-template-var]").forEach(input => {
+    vars[input.dataset.templateVar] = input.value;
+  });
+  return { name, vars };
+}
+
+async function createTemplate() {
+  const result = document.getElementById("template-result");
+  const { status, body } = await post("/api/v1/templates", {
+    name: document.getElementById("new-template-name").value,
+    channel: document.getElementById("new-template-channel").value,
+    body: document.getElementById("new-template-body").value,
+  });
+  if (status === 201) {
+    result.textContent = "created " + body.name;
+    document.getElementById("template-create").open = false;
+    refreshTemplates();
+  } else {
+    result.textContent = (body.fields || [{}])[0].message || body.error || ("failed: " + status);
+  }
+}
+
+async function refreshTemplates() {
+  try {
+    const listing = await apiOK("/api/v1/templates", undefined, true);
+    knownTemplates = listing.data || [];
+    renderTemplateList();
+    if (document.getElementById("send-mode").value === "template") renderTemplateVars();
+  } catch { /* panel shows the last known list */ }
+}
+
 /* ---------- send panel ---------- */
+function sendPayload() {
+  const payload = {
+    recipient: document.getElementById("recipient").value,
+    channel: document.getElementById("channel").value,
+    priority: document.getElementById("priority").value,
+  };
+  if (document.getElementById("send-mode").value === "template") {
+    payload.template = collectTemplateRef();
+  } else {
+    payload.content = document.getElementById("content").value;
+  }
+  const delaySeconds = parseInt(document.getElementById("deliver-at").value, 10);
+  if (delaySeconds > 0) {
+    payload.scheduled_at = new Date(Date.now() + delaySeconds * 1000).toISOString();
+  }
+  return payload;
+}
+
 function sendCustom() {
   const count = parseInt(document.getElementById("custom-count").value, 10);
   if (!Number.isFinite(count) || count < 1 || count > 10000) {
@@ -711,12 +914,7 @@ async function sendBurst(count) {
   if (busy) return;
   busy = true;
   setControlsDisabled(true);
-  const payload = {
-    recipient: document.getElementById("recipient").value,
-    channel: document.getElementById("channel").value,
-    content: document.getElementById("content").value,
-    priority: document.getElementById("priority").value,
-  };
+  const payload = sendPayload();
   const result = document.getElementById("send-result");
   const concurrency = Math.min(count, 20);
   let started = 0, done = 0, accepted = 0, rejected = 0;
@@ -724,7 +922,9 @@ async function sendBurst(count) {
   const lane = async () => {
     while (started < count) {
       const index = ++started;
-      const body = count === 1 ? payload : { ...payload, content: payload.content + " #" + index };
+      const body = count === 1 || !payload.content
+        ? payload
+        : { ...payload, content: payload.content + " #" + index };
       try {
         const { status } = await post("/api/v1/notifications", body);
         status === 201 || status === 200 ? accepted++ : rejected++;
@@ -779,9 +979,15 @@ function renderNotifications(rows) {
   const body = document.getElementById("notifications");
   if (!rows.length) { body.innerHTML = '<tr><td colspan="6" class="empty">none yet</td></tr>'; return; }
   body.innerHTML = rows.map(n => {
-    const detail = n.last_error
-      ? `<span class="err-text">${escapeHTML(n.last_error.slice(0, 60))}</span>`
-      : escapeHTML((n.content || "").slice(0, 34));
+    let detail;
+    if (n.last_error) {
+      detail = `<span class="err-text">${escapeHTML(n.last_error.slice(0, 60))}</span>`;
+    } else if (n.status === "scheduled" && n.scheduled_at) {
+      const seconds = Math.max(0, Math.round((new Date(n.scheduled_at) - Date.now()) / 1000));
+      detail = `⏱ fires in ${seconds}s — ` + escapeHTML((n.content || "").slice(0, 20));
+    } else {
+      detail = escapeHTML((n.content || "").slice(0, 34));
+    }
     return `<tr><td class="id">${n.id.slice(0, 8)}</td><td>${n.channel}</td><td>${n.priority[0]}</td>` +
       `<td><span class="chip ${n.status}">${n.status}</span></td><td>${n.attempts}</td><td>${detail}</td></tr>`;
   }).join("");
@@ -871,7 +1077,9 @@ async function refresh() {
 
 renderScenarios();
 refresh();
+refreshTemplates();
 setInterval(refresh, 1000);
+setInterval(refreshTemplates, 5000);
 </script>
 </body>
 </html>
