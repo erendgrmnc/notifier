@@ -18,6 +18,8 @@ security: []
 tags:
   - name: notifications
     description: Create and track notifications
+  - name: templates
+    description: Reusable message templates with variable substitution
   - name: system
     description: Health and diagnostics
 
@@ -292,6 +294,99 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/templates:
+    post:
+      tags: [templates]
+      summary: Create a message template
+      description: |
+        Bodies use Go text/template syntax with {{.variable}} placeholders
+        and are parse-validated at creation. Templates render into final
+        content at enqueue time; notifications keep no reference to them.
+      operationId: createTemplate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, channel, body]
+              properties:
+                name:
+                  type: string
+                  description: URL-safe identifier (lowercase letters, digits, hyphen, underscore).
+                  example: otp-code
+                channel:
+                  $ref: '#/components/schemas/Channel'
+                body:
+                  type: string
+                  example: "Your verification code is {{.code}}."
+      responses:
+        '201':
+          description: Template created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+        '400':
+          description: Validation failed (name shape, channel, unparseable body).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Template name already exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      tags: [templates]
+      summary: List templates
+      operationId: listTemplates
+      responses:
+        '200':
+          description: All templates, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Template'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/templates/{name}:
+    get:
+      tags: [templates]
+      summary: Get a template by name
+      operationId: getTemplate
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The template.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+        '404':
+          description: No template with this name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /healthz:
     get:
       tags: [system]
@@ -464,9 +559,39 @@ components:
         * `cancelled` — cancelled before delivery (terminal)
       enum: [pending, scheduled, queued, processing, retrying, sent, failed, cancelled]
 
+    Template:
+      type: object
+      properties:
+        name:
+          type: string
+        channel:
+          $ref: '#/components/schemas/Channel'
+        body:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    TemplateRef:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          example: otp-code
+        vars:
+          type: object
+          additionalProperties:
+            type: string
+          description: Values for every {{.variable}} the template body references.
+
     CreateNotificationRequest:
       type: object
-      required: [recipient, channel, content]
+      required: [recipient, channel]
+      description: Exactly one of content or template must be provided.
       properties:
         recipient:
           type: string
@@ -481,8 +606,10 @@ components:
           type: string
           description: |
             Message body. Limits: sms 160 characters, push 512 bytes,
-            email 100 KB.
+            email 100 KB. Mutually exclusive with template.
           example: "Your order has shipped."
+        template:
+          $ref: '#/components/schemas/TemplateRef'
         priority:
           $ref: '#/components/schemas/Priority'
         scheduled_at:
