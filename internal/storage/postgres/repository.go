@@ -212,6 +212,54 @@ func scanNotification(row pgx.Row) (domain.Notification, error) {
 	return notification, err
 }
 
+// ListRecent returns the newest notifications, most recent first. The
+// full filtered/paginated listing extends this later.
+func (repo *NotificationRepository) ListRecent(ctx context.Context, limit int) ([]domain.Notification, error) {
+	query := `SELECT ` + notificationColumns + `
+		FROM notifications
+		ORDER BY created_at DESC, id DESC
+		LIMIT $1`
+
+	rows, err := repo.pool.Query(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list recent notifications: %w", err)
+	}
+	defer rows.Close()
+
+	var notifications []domain.Notification
+	for rows.Next() {
+		notification, err := scanNotification(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan recent notification: %w", err)
+		}
+		notifications = append(notifications, notification)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list recent notifications: %w", err)
+	}
+	return notifications, nil
+}
+
+// WorkerPaused reads the worker pause flag.
+func (repo *NotificationRepository) WorkerPaused(ctx context.Context) (bool, error) {
+	var paused bool
+	err := repo.pool.QueryRow(ctx, `SELECT paused FROM worker_control WHERE id = 1`).Scan(&paused)
+	if err != nil {
+		return false, fmt.Errorf("read worker pause flag: %w", err)
+	}
+	return paused, nil
+}
+
+// SetWorkerPaused flips the worker pause flag.
+func (repo *NotificationRepository) SetWorkerPaused(ctx context.Context, paused bool) error {
+	_, err := repo.pool.Exec(ctx,
+		`UPDATE worker_control SET paused = $1, updated_at = now() WHERE id = 1`, paused)
+	if err != nil {
+		return fmt.Errorf("set worker pause flag: %w", err)
+	}
+	return nil
+}
+
 // Connect opens a pgx pool and verifies connectivity.
 func Connect(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	pool, err := pgxpool.New(ctx, databaseURL)
