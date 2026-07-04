@@ -40,6 +40,17 @@ func (repo *fakeRepository) GetByID(_ context.Context, id uuid.UUID) (domain.Not
 	return notification, nil
 }
 
+func (repo *fakeRepository) ListRecent(_ context.Context, limit int) ([]domain.Notification, error) {
+	var notifications []domain.Notification
+	for _, notification := range repo.stored {
+		notifications = append(notifications, notification)
+		if len(notifications) == limit {
+			break
+		}
+	}
+	return notifications, nil
+}
+
 func (repo *fakeRepository) UpdateStatus(_ context.Context, id uuid.UUID, to domain.Status, allowedFrom ...domain.Status) error {
 	notification, ok := repo.stored[id]
 	if !ok {

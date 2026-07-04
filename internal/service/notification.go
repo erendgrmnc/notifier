@@ -19,7 +19,15 @@ type Repository interface {
 	Create(ctx context.Context, notification domain.Notification) error
 	GetByID(ctx context.Context, id uuid.UUID) (domain.Notification, error)
 	UpdateStatus(ctx context.Context, id uuid.UUID, to domain.Status, allowedFrom ...domain.Status) error
+	ListRecent(ctx context.Context, limit int) ([]domain.Notification, error)
 }
+
+// List limits: the API clamps rather than rejects, so dashboards can
+// always ask for "the recent ones" without negotiating.
+const (
+	defaultListLimit = 50
+	maxListLimit     = 100
+)
 
 // Publisher hands a created notification to the queue for delivery.
 type Publisher interface {
@@ -128,4 +136,21 @@ func (svc *NotificationService) Get(ctx context.Context, id uuid.UUID) (domain.N
 		return domain.Notification{}, fmt.Errorf("get notification: %w", err)
 	}
 	return notification, nil
+}
+
+// ListRecent returns the newest notifications, clamping the limit to
+// [1, maxListLimit] with a default when unspecified (limit <= 0).
+func (svc *NotificationService) ListRecent(ctx context.Context, limit int) ([]domain.Notification, error) {
+	if limit <= 0 {
+		limit = defaultListLimit
+	}
+	if limit > maxListLimit {
+		limit = maxListLimit
+	}
+
+	notifications, err := svc.repo.ListRecent(ctx, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list recent notifications: %w", err)
+	}
+	return notifications, nil
 }

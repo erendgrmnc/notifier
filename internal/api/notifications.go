@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -25,6 +26,7 @@ const maxRequestBodyBytes = 1 << 20 // 1 MiB
 type NotificationService interface {
 	Create(ctx context.Context, input service.CreateInput) (domain.Notification, error)
 	Get(ctx context.Context, id uuid.UUID) (domain.Notification, error)
+	ListRecent(ctx context.Context, limit int) ([]domain.Notification, error)
 }
 
 type notificationHandler struct {
@@ -106,6 +108,32 @@ func (handler *notificationHandler) create(writer http.ResponseWriter, request *
 	}
 
 	writeJSONResponse(writer, http.StatusCreated, toNotificationResponse(created))
+}
+
+// list returns recent notifications wrapped in {data} so the filtered,
+// cursor-paginated version extends the same shape.
+func (handler *notificationHandler) list(writer http.ResponseWriter, request *http.Request) {
+	limit := 0
+	if limitParam := request.URL.Query().Get("limit"); limitParam != "" {
+		parsed, err := strconv.Atoi(limitParam)
+		if err != nil || parsed < 1 {
+			writeErrorResponse(writer, http.StatusBadRequest, "limit must be a positive integer", nil)
+			return
+		}
+		limit = parsed
+	}
+
+	notifications, err := handler.notifications.ListRecent(request.Context(), limit)
+	if err != nil {
+		handler.writeServiceError(writer, request, err)
+		return
+	}
+
+	responses := make([]notificationResponse, len(notifications))
+	for i, notification := range notifications {
+		responses[i] = toNotificationResponse(notification)
+	}
+	writeJSONResponse(writer, http.StatusOK, map[string]any{"data": responses})
 }
 
 func (handler *notificationHandler) get(writer http.ResponseWriter, request *http.Request) {

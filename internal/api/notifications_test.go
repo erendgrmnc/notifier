@@ -18,9 +18,10 @@ import (
 )
 
 type fakeNotificationService struct {
-	stored     map[uuid.UUID]domain.Notification
-	createErr  error
-	lastCreate service.CreateInput
+	stored        map[uuid.UUID]domain.Notification
+	createErr     error
+	lastCreate    service.CreateInput
+	lastListLimit int
 }
 
 func newFakeNotificationService() *fakeNotificationService {
@@ -52,6 +53,15 @@ func (fake *fakeNotificationService) Get(_ context.Context, id uuid.UUID) (domai
 		return domain.Notification{}, domain.ErrNotFound
 	}
 	return notification, nil
+}
+
+func (fake *fakeNotificationService) ListRecent(_ context.Context, limit int) ([]domain.Notification, error) {
+	fake.lastListLimit = limit
+	var notifications []domain.Notification
+	for _, notification := range fake.stored {
+		notifications = append(notifications, notification)
+	}
+	return notifications, nil
 }
 
 func newRouterWithService(fake *fakeNotificationService) http.Handler {
