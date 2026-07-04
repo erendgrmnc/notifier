@@ -520,6 +520,13 @@ function wirePreview(raw) {
   if (parsed && Array.isArray(parsed.notifications)) interesting.items = parsed.notifications.length;
   if (parsed && parsed.template && parsed.template.name) interesting.template = parsed.template.name;
   if (parsed && parsed.name && parsed.body) interesting.name = parsed.name;
+  // Error responses: surface the message and the first failing field.
+  if (parsed && parsed.error) interesting.error = String(parsed.error).slice(0, 60);
+  if (parsed && Array.isArray(parsed.fields) && parsed.fields.length) {
+    const first = parsed.fields[0];
+    interesting.field = first.field + ": " + String(first.message).slice(0, 45) +
+      (parsed.fields.length > 1 ? " (+" + (parsed.fields.length - 1) + " more)" : "");
+  }
   if (parsed && Array.isArray(parsed.results)) interesting.results = parsed.results.map(r => r.status).join(",");
   if (parsed && parsed.content) interesting.content = String(parsed.content).slice(0, 24);
   const parts = Object.entries(interesting).map(([key, value]) => {
@@ -527,7 +534,7 @@ function wirePreview(raw) {
     if ((key === "id" || key === "existing_id" || key === "batch_id") && shown.length > 8) shown = shown.slice(0, 8);
     return key + "=" + shown;
   });
-  return parts.join(" ").slice(0, 110);
+  return parts.join(" ").slice(0, 140);
 }
 
 function recordWire(method, path, requestBody, status, responseBody) {
