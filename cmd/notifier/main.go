@@ -123,7 +123,7 @@ func run() error {
 	}
 
 	if runsWorker {
-		queueWorker := worker.New(repository, newSender(cfg, logger), publisher, realClock{}, logger, cfg.MaxDeliveryAttempts)
+		queueWorker := worker.New(repository, newSender(cfg, logger), publisher, repository, realClock{}, logger, cfg.MaxDeliveryAttempts)
 
 		componentGroup.Add(1)
 		go func() {

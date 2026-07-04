@@ -1,5 +1,5 @@
 // Package worker consumes notification messages and orchestrates
-// delivery: status transitions, sending, and (in later phases) retries.
+// delivery: claiming, sending, retry-tier decisions, and ack/nack.
 package worker
 
 import (
@@ -7,24 +7,39 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 
+	"notifier/internal/delivery"
 	"notifier/internal/domain"
 	"notifier/internal/observability"
 )
 
 // Repository is what the worker needs from persistence.
 type Repository interface {
-	GetByID(ctx context.Context, id uuid.UUID) (domain.Notification, error)
-	UpdateStatus(ctx context.Context, id uuid.UUID, to domain.Status, allowedFrom ...domain.Status) error
+	ClaimForProcessing(ctx context.Context, id uuid.UUID, allowedFrom ...domain.Status) (domain.Notification, error)
 	MarkSent(ctx context.Context, id uuid.UUID, providerMessageID string, sentAt time.Time) error
+	MarkRetrying(ctx context.Context, id uuid.UUID, lastError string) error
+	MarkFailed(ctx context.Context, id uuid.UUID, lastError string) error
 }
 
 // Sender delivers one notification to the external provider.
 type Sender interface {
 	Send(ctx context.Context, notification domain.Notification) (providerMessageID string, err error)
+}
+
+// Publisher schedules retries and records dead letters.
+type Publisher interface {
+	PublishRetry(ctx context.Context, notification domain.Notification, attempt int) error
+	PublishDeadLetter(ctx context.Context, notification domain.Notification, reason string) error
+}
+
+// PauseChecker reports whether delivery processing is paused (the
+// dashboard's worker toggle, shared via the database).
+type PauseChecker interface {
+	WorkerPaused(ctx context.Context) (bool, error)
 }
 
 // Clock supplies time so delivery timestamps are testable.
@@ -40,63 +55,65 @@ const outcomeWriteTimeout = 5 * time.Second
 
 // Worker processes queued notifications.
 type Worker struct {
-	repo   Repository
-	sender Sender
-	clock  Clock
-	logger *slog.Logger
+	repo        Repository
+	sender      Sender
+	publisher   Publisher
+	pause       PauseChecker
+	clock       Clock
+	logger      *slog.Logger
+	maxAttempts int
+	lastPaused  atomic.Bool
 }
 
-func New(repo Repository, sender Sender, clock Clock, logger *slog.Logger) *Worker {
-	return &Worker{repo: repo, sender: sender, clock: clock, logger: logger}
+func New(repo Repository, sender Sender, publisher Publisher, pause PauseChecker, clock Clock, logger *slog.Logger, maxAttempts int) *Worker {
+	return &Worker{
+		repo:        repo,
+		sender:      sender,
+		publisher:   publisher,
+		pause:       pause,
+		clock:       clock,
+		logger:      logger,
+		maxAttempts: maxAttempts,
+	}
 }
 
 // processNotification handles one consumed message. A nil return means
-// the message is settled (delivered or deliberately dropped) and must be
-// acked; an error means infrastructure trouble and the message should be
-// redelivered.
+// the message is settled (delivered, scheduled for retry, failed, or
+// deliberately dropped) and must be acked; an error means infrastructure
+// trouble and the message should be redelivered.
 func (worker *Worker) processNotification(ctx context.Context, id uuid.UUID) error {
 	logger := observability.LoggerFrom(ctx, worker.logger).With(slog.String("notification_id", id.String()))
 
-	notification, err := worker.repo.GetByID(ctx, id)
-	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			logger.Warn("message references unknown notification; dropping")
-			return nil
-		}
-		return fmt.Errorf("load notification: %w", err)
-	}
-
-	// The guarded transition is the idempotency gate: cancelled, already
-	// sent, or concurrently processing rows all fail the guard and the
-	// redelivered message is dropped without a duplicate send. The
-	// allowed-from set is derived from the domain state machine (it
-	// includes pending because a consumed message proves publication
-	// even when the producer's queued mark has not landed yet).
-	err = worker.repo.UpdateStatus(ctx, id, domain.StatusProcessing,
+	// The guarded claim is the idempotency gate: cancelled, already sent,
+	// or concurrently processing rows are rejected and the redelivered
+	// message is dropped without a duplicate send. The allowed-from set is
+	// derived from the domain state machine (it includes pending because a
+	// consumed message proves publication even when the producer's queued
+	// mark has not landed yet).
+	claimed, err := worker.repo.ClaimForProcessing(ctx, id,
 		domain.StatusesAllowedInto(domain.StatusProcessing)...)
 	if err != nil {
-		if errors.Is(err, domain.ErrInvalidTransition) || errors.Is(err, domain.ErrNotFound) {
-			logger.Info("skipping delivery", slog.String("status", string(notification.Status)))
+		switch {
+		case errors.Is(err, domain.ErrNotFound):
+			logger.Warn("message references unknown notification; dropping")
 			return nil
+		case errors.Is(err, domain.ErrInvalidTransition):
+			logger.Info("skipping delivery; notification not claimable")
+			return nil
+		default:
+			return fmt.Errorf("claim notification: %w", err)
 		}
-		return fmt.Errorf("mark processing: %w", err)
 	}
 
-	providerMessageID, err := worker.sender.Send(ctx, notification)
+	providerMessageID, sendErr := worker.sender.Send(ctx, claimed)
 
 	// The send is irreversible; its outcome is written on a detached
 	// context so shutdown cannot lose what actually happened.
 	outcomeCtx, cancelOutcome := context.WithTimeout(context.WithoutCancel(ctx), outcomeWriteTimeout)
 	defer cancelOutcome()
 
-	if err != nil {
-		// Interim failure handling: retry tiers and error
-		// classification arrive with the delivery provider phase.
-		logger.Error("delivery failed", slog.Any("error", err))
-		if err := worker.repo.UpdateStatus(outcomeCtx, id, domain.StatusFailed, domain.StatusProcessing); err != nil {
-			return fmt.Errorf("mark failed: %w", err)
-		}
-		return nil
+	if sendErr != nil {
+		return worker.handleSendFailure(outcomeCtx, logger, claimed, sendErr)
 	}
 
 	if err := worker.repo.MarkSent(outcomeCtx, id, providerMessageID, worker.clock.Now()); err != nil {
@@ -107,6 +124,57 @@ func (worker *Worker) processNotification(ctx context.Context, id uuid.UUID) err
 		return fmt.Errorf("mark sent: %w", err)
 	}
 
-	logger.Info("notification delivered", slog.String("provider_message_id", providerMessageID))
+	logger.Info("notification delivered",
+		slog.String("provider_message_id", providerMessageID),
+		slog.Int("attempt", claimed.Attempts),
+	)
+	return nil
+}
+
+// handleSendFailure applies the retry policy: retryable failures with
+// attempts left go to a backoff tier; permanent or exhausted ones are
+// failed and dead-lettered. The database write always precedes the queue
+// publish so the row never claims less than what happened.
+func (worker *Worker) handleSendFailure(ctx context.Context, logger *slog.Logger, claimed domain.Notification, sendErr error) error {
+	retryable := delivery.IsRetryable(sendErr)
+	attemptsLeft := claimed.Attempts < worker.maxAttempts
+
+	logger = logger.With(
+		slog.Int("attempt", claimed.Attempts),
+		slog.Bool("retryable", retryable),
+		slog.Any("error", sendErr),
+	)
+
+	if retryable && attemptsLeft {
+		if err := worker.repo.MarkRetrying(ctx, claimed.ID, sendErr.Error()); err != nil {
+			if errors.Is(err, domain.ErrInvalidTransition) {
+				logger.Warn("retrying notification changed status concurrently")
+				return nil
+			}
+			return fmt.Errorf("mark retrying: %w", err)
+		}
+		if err := worker.publisher.PublishRetry(ctx, claimed, claimed.Attempts); err != nil {
+			// The row reads retrying, which the claim guard accepts, so
+			// nack-redelivery of the original message recovers this.
+			return fmt.Errorf("publish retry: %w", err)
+		}
+		logger.Info("delivery failed; retry scheduled")
+		return nil
+	}
+
+	reason := fmt.Sprintf("attempt %d/%d: %v", claimed.Attempts, worker.maxAttempts, sendErr)
+	if err := worker.repo.MarkFailed(ctx, claimed.ID, sendErr.Error()); err != nil {
+		if errors.Is(err, domain.ErrInvalidTransition) {
+			logger.Warn("failed notification changed status concurrently")
+			return nil
+		}
+		return fmt.Errorf("mark failed: %w", err)
+	}
+	// DLQ publish failure is logged, not retried: the database row is the
+	// source of truth and already records the failure.
+	if err := worker.publisher.PublishDeadLetter(ctx, claimed, reason); err != nil {
+		logger.Error("dead-letter publish failed", slog.Any("error", err))
+	}
+	logger.Error("delivery failed permanently")
 	return nil
 }
