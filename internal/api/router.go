@@ -14,6 +14,7 @@ import (
 type RouterConfig struct {
 	Logger         *slog.Logger
 	RequestTimeout time.Duration
+	Notifications  NotificationService
 }
 
 // NewRouter builds the service router with the standard middleware chain:
@@ -27,6 +28,12 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 	router.Use(middleware.Timeout(cfg.RequestTimeout))
 
 	router.Get("/healthz", handleHealthz)
+
+	notifications := &notificationHandler{notifications: cfg.Notifications, logger: cfg.Logger}
+	router.Route("/api/v1", func(v1 chi.Router) {
+		v1.Post("/notifications", notifications.create)
+		v1.Get("/notifications/{id}", notifications.get)
+	})
 
 	return router
 }
