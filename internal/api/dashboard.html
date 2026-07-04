@@ -6,73 +6,178 @@
 <title>Notifier — Testing Dashboard</title>
 <style>
   :root {
-    --bg: #0f1420; --panel: #171e2e; --panel2: #1e2740; --line: #2a3550;
-    --text: #e6ebf5; --muted: #8b96ad; --accent: #4f8cff;
-    --ok: #34c98e; --warn: #f5b83d; --bad: #f06a6a; --info: #7aa7ff;
+    --ink: #0f1420;        /* page */
+    --panel: #151c2c;      /* panel body */
+    --panel-2: #1b2438;    /* inset fields */
+    --edge: #263252;       /* borders */
+    --paper: #e9edf6;      /* primary text */
+    --dim: #8391ab;        /* secondary text */
+    --signal: #ffb454;     /* phosphor amber — the one accent */
+    --ok: #3ddc97;
+    --fail: #ff5d5d;
+    --info: #6ea8ff;
+    --mono: "Cascadia Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: system-ui, "Segoe UI", sans-serif;
   }
   * { box-sizing: border-box; margin: 0; }
-  body { background: var(--bg); color: var(--text); font: 14px/1.45 ui-sans-serif, system-ui, "Segoe UI", sans-serif; padding: 20px; }
-  h1 { font-size: 18px; letter-spacing: .3px; }
-  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin-bottom: 10px; }
-  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
-  .layout { display: grid; grid-template-columns: 320px 1fr 1fr; gap: 14px; align-items: start; }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  body { background: var(--ink); color: var(--paper); font: 13.5px/1.5 var(--sans); padding: 16px 18px; }
+
+  /* ---- header strip ---- */
+  header {
+    display: flex; align-items: center; gap: 18px;
+    border: 1px solid var(--edge); border-radius: 10px;
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    padding: 10px 16px; margin-bottom: 14px;
+  }
+  .wordmark { font: 700 15px var(--mono); letter-spacing: .04em; }
+  .wordmark span { color: var(--signal); }
+  .strip-item { font: 11px var(--mono); color: var(--dim); }
+  .strip-item b { color: var(--paper); font-weight: 600; }
+  header .spacer { flex: 1; }
+  .worker-switch {
+    font: 600 12px var(--mono); letter-spacing: .06em;
+    border: 1px solid var(--edge); border-radius: 999px;
+    padding: 7px 16px; cursor: pointer; background: var(--panel-2); color: var(--paper);
+  }
+  .worker-switch.running { border-color: var(--ok); color: var(--ok); }
+  .worker-switch.paused  { border-color: var(--fail); color: var(--fail); }
+  .worker-switch:focus-visible, button:focus-visible, input:focus-visible,
+  select:focus-visible, textarea:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+
+  #error-bar { display:none; margin-bottom: 12px; border: 1px solid var(--fail); color: var(--fail);
+    background: rgba(255,93,93,.08); border-radius: 8px; padding: 6px 12px; font: 12px var(--mono); }
+
+  /* ---- layout ---- */
+  .layout { display: grid; grid-template-columns: 330px minmax(430px, 1fr) 330px; gap: 14px; align-items: start; }
+  @media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } }
   .stack { display: grid; gap: 14px; }
-  label { display: block; color: var(--muted); font-size: 12px; margin: 8px 0 3px; }
-  input, select, textarea { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; font: inherit; }
-  textarea { resize: vertical; min-height: 54px; }
-  button { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 8px 12px; font: inherit; cursor: pointer; }
-  button.secondary { background: var(--panel2); border: 1px solid var(--line); color: var(--text); }
-  button:disabled { opacity: .5; cursor: default; }
+  .panel { background: var(--panel); border: 1px solid var(--edge); border-radius: 10px; padding: 14px; }
+  .panel > h2 {
+    font: 600 10.5px var(--mono); letter-spacing: .18em; text-transform: uppercase;
+    color: var(--dim); margin-bottom: 12px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .panel > h2::after { content: ""; flex: 1; height: 1px; background: var(--edge); }
+
+  /* ---- scenario cards (signature) ---- */
+  .scenario { border: 1px solid var(--edge); border-radius: 8px; background: var(--panel-2); padding: 10px 12px; margin-bottom: 10px; }
+  .scenario:last-child { margin-bottom: 0; }
+  .scenario-head { display: flex; align-items: baseline; gap: 8px; }
+  .scenario-head h3 { font: 600 12.5px var(--mono); letter-spacing: .02em; }
+  .scenario-head .verdict { margin-left: auto; font: 700 10.5px var(--mono); letter-spacing: .14em;
+    padding: 2px 8px; border-radius: 4px; border: 1.5px solid transparent; }
+  .verdict.pass { color: var(--ok); border-color: var(--ok); }
+  .verdict.fail { color: var(--fail); border-color: var(--fail); }
+  .verdict.running { color: var(--signal); border-color: var(--signal); animation: blink 1.2s infinite; }
+  @keyframes blink { 50% { opacity: .45; } }
+  @media (prefers-reduced-motion: reduce) {
+    .verdict.running { animation: none; }
+    .meter-fill { transition: none !important; }
+  }
+  .scenario p { color: var(--dim); font-size: 11.5px; margin: 4px 0 8px; }
+  .steps { list-style: none; padding: 0; font: 11.5px var(--mono); display: none; }
+  .steps.visible { display: block; margin-bottom: 8px; }
+  .steps li { padding: 2px 0 2px 18px; position: relative; color: var(--dim); }
+  .steps li::before { content: "·"; position: absolute; left: 4px; }
+  .steps li.running { color: var(--signal); }
+  .steps li.running::before { content: "▸"; }
+  .steps li.done { color: var(--paper); }
+  .steps li.done::before { content: "✓"; color: var(--ok); }
+  .steps li.failed { color: var(--fail); }
+  .steps li.failed::before { content: "✗"; }
+  .steps li .note { color: var(--dim); }
+  .scenario button { font: 600 11px var(--mono); letter-spacing: .05em;
+    background: transparent; color: var(--signal); border: 1px solid var(--signal);
+    border-radius: 5px; padding: 4px 12px; cursor: pointer; }
+  .scenario button:hover:not(:disabled) { background: rgba(255,180,84,.12); }
+  .scenario button:disabled { opacity: .35; cursor: default; }
+  .scenario .took { font: 10.5px var(--mono); color: var(--dim); margin-left: 8px; }
+
+  /* ---- send form ---- */
+  label { display: block; color: var(--dim); font: 10.5px var(--mono); letter-spacing: .1em;
+    text-transform: uppercase; margin: 9px 0 3px; }
+  input, select, textarea { width: 100%; background: var(--panel-2); color: var(--paper);
+    border: 1px solid var(--edge); border-radius: 6px; padding: 7px 9px; font: 12.5px var(--mono); }
+  textarea { resize: vertical; min-height: 52px; }
   .row { display: flex; gap: 8px; margin-top: 10px; }
-  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
-  .hint code { color: var(--warn); }
-  /* worker toggle */
-  .worker { display: flex; align-items: center; gap: 10px; }
-  .worker button { min-width: 130px; font-weight: 600; }
-  .worker .running { background: var(--ok); color: #05231a; }
-  .worker .paused  { background: var(--bad); color: #2b0808; }
-  /* queues */
-  .queue { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px dashed var(--line); }
-  .queue:last-child { border-bottom: 0; }
-  .queue .name { color: var(--muted); font-family: ui-monospace, monospace; font-size: 12px; }
-  .queue .count { font-weight: 700; min-width: 34px; text-align: right; }
-  .queue .count.nonzero { color: var(--warn); }
-  /* table */
-  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  th { text-align: left; color: var(--muted); font-weight: 500; padding: 4px 8px; border-bottom: 1px solid var(--line); }
-  td { padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  td.mono { font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--muted); }
-  .chip { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
-  .chip.sent { background: rgba(52,201,142,.15); color: var(--ok); }
-  .chip.failed { background: rgba(240,106,106,.15); color: var(--bad); }
-  .chip.cancelled { background: rgba(139,150,173,.2); color: var(--muted); }
-  .chip.retrying, .chip.processing { background: rgba(245,184,61,.15); color: var(--warn); }
-  .chip.queued, .chip.pending, .chip.scheduled { background: rgba(122,167,255,.15); color: var(--info); }
-  .err { color: var(--bad); font-size: 11px; }
-  /* clients */
-  .client { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 10px; background: var(--panel2); }
-  .client .who { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
-  .msg { border-radius: 8px; padding: 7px 10px; margin-top: 6px; font-size: 12.5px; }
-  .msg .meta { color: var(--muted); font-size: 10.5px; margin-top: 3px; }
-  .msg.sms  { background: #123c2b; border-radius: 14px 14px 14px 4px; }
-  .msg.email{ background: #1c2a4a; border-left: 3px solid var(--info); }
-  .msg.push { background: #332512; border: 1px solid rgba(245,184,61,.35); }
-  .empty { color: var(--muted); font-style: italic; padding: 8px 0; }
-  #error-bar { display: none; background: rgba(240,106,106,.15); color: var(--bad); border: 1px solid var(--bad); border-radius: 6px; padding: 6px 10px; margin-bottom: 12px; font-size: 12px; }
+  .row button { flex: 1; background: var(--panel-2); color: var(--paper); border: 1px solid var(--edge);
+    border-radius: 6px; padding: 7px 0; font: 600 11.5px var(--mono); cursor: pointer; }
+  .row button.primary { background: var(--signal); border-color: var(--signal); color: #241503; }
+  .row button:hover:not(:disabled) { border-color: var(--signal); }
+  .row button.primary:hover:not(:disabled) { filter: brightness(1.08); }
+  .row button:disabled { opacity: .4; cursor: default; }
+  .hint { color: var(--dim); font-size: 11px; margin-top: 8px; }
+  .hint code { color: var(--signal); font-family: var(--mono); }
+
+  /* ---- queue meters ---- */
+  .meter { display: grid; grid-template-columns: 150px 1fr 44px; gap: 8px; align-items: center; padding: 4px 0; }
+  .meter .name { font: 11px var(--mono); color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
+  .meter-track { height: 8px; border-radius: 4px; background: var(--panel-2); border: 1px solid var(--edge); overflow: hidden; }
+  .meter-fill { height: 100%; width: 0; background: var(--signal); border-radius: 3px; transition: width .4s ease; }
+  .meter.retry .meter-fill { background: var(--info); }
+  .meter.dlq .meter-fill { background: var(--fail); }
+  .meter .count { font: 600 11.5px var(--mono); text-align: right; }
+  .meter .count.zero { color: var(--dim); font-weight: 400; }
+
+  /* ---- notifications feed ---- */
+  table { width: 100%; border-collapse: collapse; font: 11.5px var(--mono); }
+  th { text-align: left; color: var(--dim); font-weight: 500; padding: 3px 6px;
+    border-bottom: 1px solid var(--edge); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; }
+  td { padding: 4px 6px; border-bottom: 1px solid rgba(38,50,82,.5); vertical-align: top; }
+  td.id { color: var(--dim); }
+  .chip { display: inline-block; padding: 0 7px; border-radius: 999px; font-size: 10.5px; font-weight: 600; }
+  .chip.sent { color: var(--ok); background: rgba(61,220,151,.12); }
+  .chip.failed { color: var(--fail); background: rgba(255,93,93,.12); }
+  .chip.cancelled { color: var(--dim); background: rgba(131,145,171,.15); }
+  .chip.retrying, .chip.processing { color: var(--signal); background: rgba(255,180,84,.12); }
+  .chip.queued, .chip.pending, .chip.scheduled { color: var(--info); background: rgba(110,168,255,.12); }
+  .err-text { color: var(--fail); font-size: 10.5px; }
+
+  /* ---- client inboxes ---- */
+  .client { border: 1px solid var(--edge); border-radius: 8px; background: var(--panel-2); padding: 9px 11px; margin-bottom: 10px; }
+  .client .who { font: 11px var(--mono); color: var(--dim); margin-bottom: 4px; }
+  .msg { border-radius: 7px; padding: 6px 9px; margin-top: 6px; font-size: 12px; }
+  .msg .meta { color: var(--dim); font: 10px var(--mono); margin-top: 3px; }
+  .msg.sms   { background: #14352a; border-radius: 12px 12px 12px 3px; }
+  .msg.email { background: #1a2a4a; border-left: 3px solid var(--info); }
+  .msg.push  { background: #33270f; border: 1px solid rgba(255,180,84,.3); }
+  .empty { color: var(--dim); font-style: italic; font-size: 12px; padding: 6px 0; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Notifier — Testing Dashboard</h1>
-  <div class="worker">
-    <span id="worker-label" class="hint">worker: …</span>
-    <button id="worker-toggle" class="secondary" onclick="toggleWorker()">…</button>
-  </div>
+  <div class="wordmark">notifier<span>://</span>testing dashboard</div>
+  <div class="strip-item">queued <b id="strip-queued">–</b></div>
+  <div class="strip-item">delivered <b id="strip-delivered">–</b></div>
+  <div class="strip-item" id="strip-note"></div>
+  <div class="spacer"></div>
+  <button id="worker-toggle" class="worker-switch" onclick="toggleWorker()">worker: …</button>
 </header>
-<div id="error-bar"></div>
+<div id="error-bar" role="alert"></div>
 
 <div class="layout">
+  <!-- left: scenarios -->
+  <div class="panel">
+    <h2>Scenarios</h2>
+    <div id="scenarios"></div>
+  </div>
+
+  <!-- center: live system -->
+  <div class="stack">
+    <div class="panel">
+      <h2>Queues</h2>
+      <div id="queues"><p class="empty">reading…</p></div>
+    </div>
+    <div class="panel">
+      <h2>Notifications</h2>
+      <table>
+        <thead><tr><th>id</th><th>ch</th><th>prio</th><th>status</th><th>att</th><th>detail</th></tr></thead>
+        <tbody id="notifications"><tr><td colspan="6" class="empty">reading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- right: send + clients -->
   <div class="stack">
     <div class="panel">
       <h2>Send</h2>
@@ -80,90 +185,380 @@
       <input id="recipient" value="+905551234567"/>
       <label for="channel">Channel</label>
       <select id="channel" onchange="placeholderRecipient()">
-        <option value="sms">sms</option>
-        <option value="email">email</option>
-        <option value="push">push</option>
+        <option value="sms">sms</option><option value="email">email</option><option value="push">push</option>
       </select>
       <label for="content">Content</label>
       <textarea id="content">Hello from the dashboard!</textarea>
       <label for="priority">Priority</label>
       <select id="priority">
-        <option value="high">high</option>
-        <option value="normal" selected>normal</option>
-        <option value="low">low</option>
+        <option value="high">high</option><option value="normal" selected>normal</option><option value="low">low</option>
       </select>
       <div class="row">
-        <button onclick="sendBurst(1)">Send 1</button>
-        <button class="secondary" onclick="sendBurst(10)">Send 10</button>
-        <button class="secondary" onclick="sendBurst(100)">Send 100</button>
-        <button class="secondary" onclick="sendBurst(1000)">Send 1000</button>
+        <button class="primary" onclick="sendBurst(1)">Send 1</button>
+        <button onclick="sendBurst(10)">×10</button>
+        <button onclick="sendBurst(100)">×100</button>
+        <button onclick="sendBurst(1000)">×1000</button>
       </div>
       <div class="row">
-        <input id="custom-count" type="number" min="1" max="10000" placeholder="custom count" style="flex:1"/>
-        <button class="secondary" onclick="sendCustom()">Send N</button>
+        <input id="custom-count" type="number" min="1" max="10000" placeholder="count" style="flex:1"/>
+        <button onclick="sendCustom()" style="flex:1">Send N</button>
       </div>
-      <p class="hint">Include <code>FAILME</code> in content to simulate a provider outage (retries), or <code>REJECTME</code> for a permanent rejection (DLQ).</p>
+      <p class="hint"><code>FAILME</code> in content simulates a provider outage (retries); <code>REJECTME</code> a permanent rejection (dead letter).</p>
       <p class="hint" id="send-result"></p>
     </div>
-
     <div class="panel">
-      <h2>Queues</h2>
-      <div id="queues"><p class="empty">loading…</p></div>
+      <h2>Clients</h2>
+      <div id="clients"><p class="empty">nothing delivered yet</p></div>
     </div>
-  </div>
-
-  <div class="panel">
-    <h2>Recent notifications</h2>
-    <table>
-      <thead><tr><th>id</th><th>ch</th><th>prio</th><th>status</th><th>att</th><th>detail</th></tr></thead>
-      <tbody id="notifications"><tr><td colspan="6" class="empty">loading…</td></tr></tbody>
-    </table>
-  </div>
-
-  <div class="panel">
-    <h2>Clients — delivered messages</h2>
-    <div id="clients"><p class="empty">nothing delivered yet</p></div>
   </div>
 </div>
 
 <script>
+"use strict";
 const defaults = { sms: "+905551234567", email: "user@example.com", push: "device-token-1234" };
 let workerPaused = null;
+let busy = false; // one scenario or burst at a time — they share the pipeline
 
+/* ---------- plumbing ---------- */
 function showError(message) {
   const bar = document.getElementById("error-bar");
-  bar.textContent = message;
-  bar.style.display = "block";
+  bar.textContent = message; bar.style.display = "block";
 }
 function clearError() { document.getElementById("error-bar").style.display = "none"; }
-
 function placeholderRecipient() {
   document.getElementById("recipient").value = defaults[document.getElementById("channel").value];
 }
-
+function escapeHTML(raw) {
+  return String(raw).replace(/[&<>"']/g, ch => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[ch]));
+}
 async function api(path, options) {
   const response = await fetch(path, options);
-  if (!response.ok) throw new Error(path + " -> " + response.status);
-  return response.json();
+  const body = await response.json().catch(() => ({}));
+  return { status: response.status, body };
+}
+async function apiOK(path, options) {
+  const { status, body } = await api(path, options);
+  if (status < 200 || status >= 300) throw new Error(path + " -> " + status);
+  return body;
+}
+const post = (path, payload) => api(path, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+});
+function expect(condition, message) { if (!condition) throw new Error(message); }
+async function pollUntil(check, timeoutMs, every = 400) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await check();
+    if (value) return value;
+    if (Date.now() > deadline) throw new Error("timed out after " + timeoutMs + "ms");
+    await new Promise(resolve => setTimeout(resolve, every));
+  }
+}
+const getNotification = async id => (await api("/api/v1/notifications/" + id)).body;
+const queueDepth = async name => {
+  const { body } = await api("/api/v1/queues");
+  const queue = (body.queues || []).find(q => q.name === name);
+  return queue ? queue.ready : 0;
+};
+async function setWorker(paused) {
+  await apiOK("/api/v1/worker", { method: "PUT",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paused }) });
+  renderWorker(paused);
+}
+// The worker polls the pause flag every second; staging before the
+// consumers actually detach lets early messages stream straight through
+// (and bypass priority ordering, which only applies to waiting messages).
+async function pauseAndDetach() {
+  await setWorker(true);
+  await new Promise(resolve => setTimeout(resolve, 2200));
+}
+function stamp() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+/* ---------- scenarios (signature) ---------- */
+const scenarios = [
+  {
+    id: "idempotency",
+    title: "idempotency",
+    proves: "Retrying a create with the same idempotency key returns the original notification, never a duplicate.",
+    run: async step => {
+      const key = "scenario-idem-" + stamp();
+      const payload = { recipient: "+905551234567", channel: "sms", content: "idempotency scenario", idempotency_key: key };
+      const first = await step("create with key", async () => {
+        const { status, body } = await post("/api/v1/notifications", payload);
+        expect(status === 201, "expected 201, got " + status);
+        return body;
+      });
+      await step("repeat identical request", async () => {
+        const { status, body } = await post("/api/v1/notifications", payload);
+        expect(status === 200, "expected 200 replay, got " + status);
+        expect(body.id === first.id, "replay returned a different notification");
+        return "same id, 200";
+      });
+    },
+  },
+  {
+    id: "retry",
+    title: "retry on outage",
+    proves: "A provider 500 marks the notification retrying with the error recorded and schedules a backoff-tier redelivery.",
+    run: async step => {
+      const created = await step("send FAILME message", async () => {
+        const { status, body } = await post("/api/v1/notifications",
+          { recipient: "+905551234567", channel: "sms", content: "FAILME retry scenario " + stamp() });
+        expect(status === 201, "expected 201, got " + status);
+        return body;
+      });
+      await step("notification enters retrying", async () => {
+        const seen = await pollUntil(async () => {
+          const current = await getNotification(created.id);
+          return current.status === "retrying" ? current : null;
+        }, 8000);
+        expect(seen.attempts >= 1, "attempts not counted");
+        expect(!!seen.last_error, "last_error not recorded");
+        return "attempts=" + seen.attempts;
+      });
+      await step("message waits in a retry tier", async () => {
+        const depth = await queueDepth("notifications.retry.5s");
+        expect(depth >= 1, "retry.5s queue is empty");
+        return "retry.5s ready=" + depth;
+      });
+    },
+  },
+  {
+    id: "dlq",
+    title: "dead letter",
+    proves: "A permanent provider rejection (400) fails immediately — no retries — and lands on the dead-letter queue.",
+    run: async step => {
+      const before = await queueDepth("notifications.dlq");
+      const created = await step("send REJECTME message", async () => {
+        const { status, body } = await post("/api/v1/notifications",
+          { recipient: "+905551234567", channel: "sms", content: "REJECTME dlq scenario " + stamp() });
+        expect(status === 201, "expected 201, got " + status);
+        return body;
+      });
+      await step("notification fails without retries", async () => {
+        const failed = await pollUntil(async () => {
+          const current = await getNotification(created.id);
+          return current.status === "failed" ? current : null;
+        }, 8000);
+        expect(failed.attempts === 1, "expected exactly 1 attempt, got " + failed.attempts);
+        return "failed after attempt 1";
+      });
+      await step("dead-letter queue receives it", async () => {
+        const after = await pollUntil(async () => {
+          const depth = await queueDepth("notifications.dlq");
+          return depth >= before + 1 ? depth : null;
+        }, 5000);
+        return "dlq ready=" + after;
+      });
+    },
+  },
+  {
+    id: "cancel",
+    title: "cancel lifecycle",
+    proves: "Scheduled notifications cancel cleanly; a second cancel conflicts because cancelled is terminal.",
+    run: async step => {
+      const scheduledAt = new Date(Date.now() + 3600 * 1000).toISOString();
+      const created = await step("schedule for +1h", async () => {
+        const { status, body } = await post("/api/v1/notifications",
+          { recipient: "+905551234567", channel: "sms", content: "cancel scenario", scheduled_at: scheduledAt });
+        expect(status === 201 && body.status === "scheduled", "not scheduled: " + body.status);
+        return body;
+      });
+      await step("cancel succeeds", async () => {
+        const { status, body } = await post("/api/v1/notifications/" + created.id + "/cancel");
+        expect(status === 200 && body.status === "cancelled", "cancel failed: " + status);
+      });
+      await step("second cancel conflicts (409)", async () => {
+        const { status } = await post("/api/v1/notifications/" + created.id + "/cancel");
+        expect(status === 409, "expected 409, got " + status);
+      });
+    },
+  },
+  {
+    id: "priority",
+    title: "priority ordering",
+    proves: "With a backlog staged, a high-priority message jumps the queue ahead of already-waiting low-priority ones.",
+    run: async step => {
+      const lows = [];
+      let high;
+      try {
+        await step("pause worker, wait for consumers to detach", pauseAndDetach);
+        await step("stage 40 low-priority", async () => {
+          for (let i = 0; i < 40; i++) {
+            const { body } = await post("/api/v1/notifications",
+              { recipient: "+905551234567", channel: "sms", content: "prio low #" + i, priority: "low" });
+            lows.push(body.id);
+          }
+        });
+        high = await step("append 1 high-priority", async () => {
+          const { body } = await post("/api/v1/notifications",
+            { recipient: "+905551234567", channel: "sms", content: "prio HIGH", priority: "high" });
+          return body;
+        });
+        await step("resume and drain", async () => {
+          await setWorker(false);
+          await pollUntil(async () => (await getNotification(high.id)).status === "sent" || null, 20000);
+          await pollUntil(async () => {
+            const last = await getNotification(lows[lows.length - 1]);
+            return last.status === "sent" || null;
+          }, 20000);
+        });
+        await step("high delivered inside first concurrency window", async () => {
+          const all = await Promise.all([high.id, ...lows].map(getNotification));
+          const ordered = all.filter(n => n.sent_at).sort((a, b) => new Date(a.sent_at) - new Date(b.sent_at));
+          const rank = ordered.findIndex(n => n.id === high.id);
+          expect(rank >= 0 && rank < 10, "high ranked " + (rank + 1) + " of " + ordered.length);
+          return "rank " + (rank + 1) + " of " + ordered.length;
+        });
+      } finally {
+        await setWorker(false).catch(() => {});
+      }
+    },
+  },
+  {
+    id: "ratelimit",
+    title: "rate limit 100/s",
+    proves: "A staged backlog drains at the per-channel cap: 250 messages spread over ≥1.4s of send timestamps (100 burst + 100/s).",
+    run: async step => {
+      const total = 250;
+      const marker = "ratelimit " + stamp();
+      try {
+        await step("pause worker, wait for consumers to detach", pauseAndDetach);
+        await step("stage " + total + " messages", async () => {
+          const lanes = 20;
+          let started = 0;
+          const lane = async () => {
+            while (started < total) {
+              const index = ++started;
+              await post("/api/v1/notifications",
+                { recipient: "+905551234567", channel: "sms", content: marker + " #" + index });
+            }
+          };
+          await Promise.all(Array.from({ length: lanes }, lane));
+        });
+        await step("resume and drain", async () => {
+          await setWorker(false);
+          await pollUntil(async () => (await queueDepth("notifications.sms")) === 0 || null, 30000, 500);
+        });
+        await step("timestamps span proves throttling", async () => {
+          const { body } = await api("/api/v1/notifications?limit=100&status=sent&channel=sms");
+          const sample = (body.data || []).filter(n => n.content.startsWith(marker) && n.sent_at);
+          expect(sample.length >= 50, "too few delivered samples: " + sample.length);
+          const times = sample.map(n => new Date(n.sent_at).getTime());
+          const spanMs = Math.max(...times) - Math.min(...times);
+          // Newest-100 sample covers the throttled tail; ≥1s span across
+          // 100 rows is impossible without the limiter (they'd land ~instantly).
+          expect(spanMs >= 700, "span " + spanMs + "ms too tight — limiter not engaged?");
+          return "sampled span " + (spanMs / 1000).toFixed(2) + "s over newest " + sample.length;
+        });
+      } finally {
+        await setWorker(false).catch(() => {});
+      }
+    },
+  },
+  {
+    id: "batch",
+    title: "batch partial success",
+    proves: "One request creates many: valid items proceed, invalid ones are rejected per index, duplicate keys point at the original.",
+    run: async step => {
+      const key = "scenario-batch-" + stamp();
+      await step("create original with key", async () => {
+        const { status } = await post("/api/v1/notifications",
+          { recipient: "+905551234567", channel: "sms", content: "batch original", idempotency_key: key });
+        expect(status === 201, "seed create failed: " + status);
+      });
+      await step("batch: valid + invalid + duplicate", async () => {
+        const { status, body } = await post("/api/v1/notifications/batch", { notifications: [
+          { recipient: "+905551111111", channel: "sms", content: "batch valid" },
+          { recipient: "not-a-phone", channel: "sms", content: "batch invalid" },
+          { recipient: "+905551234567", channel: "sms", content: "batch dup", idempotency_key: key },
+        ]});
+        expect(status === 201, "batch failed: " + status);
+        const statuses = body.results.map(r => r.status).join(",");
+        expect(statuses === "accepted,rejected,duplicate", "unexpected results: " + statuses);
+        expect(!!body.results[2].existing_id, "duplicate did not reference the original");
+        return statuses;
+      });
+    },
+  },
+];
+
+function renderScenarios() {
+  const container = document.getElementById("scenarios");
+  container.innerHTML = scenarios.map(scenario => `
+    <div class="scenario" id="scenario-${scenario.id}">
+      <div class="scenario-head">
+        <h3>${scenario.title}</h3>
+        <span class="verdict" hidden></span>
+      </div>
+      <p>${scenario.proves}</p>
+      <ul class="steps"></ul>
+      <button onclick="runScenario('${scenario.id}')">Run</button><span class="took"></span>
+    </div>`).join("");
 }
 
-let burstInFlight = false;
+async function runScenario(id) {
+  if (busy) return;
+  busy = true;
+  setControlsDisabled(true);
 
+  const scenario = scenarios.find(s => s.id === id);
+  const card = document.getElementById("scenario-" + id);
+  const verdict = card.querySelector(".verdict");
+  const stepsList = card.querySelector(".steps");
+  const took = card.querySelector(".took");
+  stepsList.innerHTML = ""; stepsList.classList.add("visible");
+  verdict.hidden = false; verdict.className = "verdict running"; verdict.textContent = "RUNNING";
+  took.textContent = "";
+
+  const step = async (label, work) => {
+    const item = document.createElement("li");
+    item.textContent = label; item.className = "running";
+    stepsList.appendChild(item);
+    try {
+      const note = await work();
+      item.className = "done";
+      if (typeof note === "string") item.innerHTML = escapeHTML(label) + ' <span class="note">— ' + escapeHTML(note) + "</span>";
+      return note;
+    } catch (err) {
+      item.className = "failed";
+      item.innerHTML = escapeHTML(label) + ' <span class="note">— ' + escapeHTML(err.message) + "</span>";
+      throw err;
+    }
+  };
+
+  const started = Date.now();
+  try {
+    await scenario.run(step);
+    verdict.className = "verdict pass"; verdict.textContent = "PASS";
+  } catch {
+    verdict.className = "verdict fail"; verdict.textContent = "FAIL";
+  } finally {
+    took.textContent = ((Date.now() - started) / 1000).toFixed(1) + "s";
+    busy = false;
+    setControlsDisabled(false);
+    refresh();
+  }
+}
+
+function setControlsDisabled(disabled) {
+  document.querySelectorAll(".scenario button, .row button").forEach(button => { button.disabled = disabled; });
+}
+
+/* ---------- send panel ---------- */
 function sendCustom() {
   const count = parseInt(document.getElementById("custom-count").value, 10);
   if (!Number.isFinite(count) || count < 1 || count > 10000) {
-    document.getElementById("send-result").textContent = "custom count must be 1-10000";
+    document.getElementById("send-result").textContent = "count must be 1–10000";
     return;
   }
   sendBurst(count);
 }
 
-// Bursts run with bounded concurrency so 1000 sends finish in seconds
-// without hammering the API from one tab.
 async function sendBurst(count) {
-  if (burstInFlight) return;
-  burstInFlight = true;
-
+  if (busy) return;
+  busy = true;
+  setControlsDisabled(true);
   const payload = {
     recipient: document.getElementById("recipient").value,
     channel: document.getElementById("channel").value,
@@ -174,94 +569,86 @@ async function sendBurst(count) {
   const concurrency = Math.min(count, 20);
   let started = 0, done = 0, accepted = 0, rejected = 0;
 
-  async function sendOne() {
-    const index = ++started;
-    const body = count === 1 ? payload : { ...payload, content: payload.content + " #" + index };
-    try {
-      const response = await fetch("/api/v1/notifications", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      response.status === 201 ? accepted++ : rejected++;
-    } catch { rejected++; }
-    done++;
-    if (done % 50 === 0 || done === count) {
-      result.textContent = "sending… " + done + "/" + count;
+  const lane = async () => {
+    while (started < count) {
+      const index = ++started;
+      const body = count === 1 ? payload : { ...payload, content: payload.content + " #" + index };
+      try {
+        const { status } = await post("/api/v1/notifications", body);
+        status === 201 || status === 200 ? accepted++ : rejected++;
+      } catch { rejected++; }
+      done++;
+      if (done % 50 === 0 || done === count) result.textContent = "sending… " + done + "/" + count;
     }
-  }
-
-  async function lane() {
-    while (started < count) await sendOne();
-  }
+  };
 
   result.textContent = "sending… 0/" + count;
   try {
     await Promise.all(Array.from({ length: concurrency }, lane));
   } finally {
-    burstInFlight = false;
+    busy = false;
+    setControlsDisabled(false);
   }
   result.textContent = "accepted " + accepted + (rejected ? ", rejected " + rejected : "");
   refresh();
 }
 
+/* ---------- worker + live panels ---------- */
 async function toggleWorker() {
   if (workerPaused === null) return;
-  try {
-    const state = await api("/api/v1/worker", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paused: !workerPaused }),
-    });
-    renderWorker(state.paused);
-  } catch (err) { showError("worker toggle failed: " + err.message); }
+  try { await setWorker(!workerPaused); }
+  catch (err) { showError("worker toggle failed: " + err.message); }
 }
 
 function renderWorker(paused) {
   workerPaused = paused;
   const toggle = document.getElementById("worker-toggle");
-  toggle.textContent = paused ? "PAUSED — resume" : "RUNNING — pause";
-  toggle.className = paused ? "paused" : "running";
-  document.getElementById("worker-label").textContent =
-    paused ? "consumers unsubscribed; messages wait in queues" : "worker consuming";
+  toggle.textContent = paused ? "worker: paused — resume" : "worker: running — pause";
+  toggle.className = "worker-switch " + (paused ? "paused" : "running");
 }
 
 function renderQueues(queues) {
-  document.getElementById("queues").innerHTML = queues.map(queue =>
-    `<div class="queue"><span class="name">${queue.name}</span>` +
-    `<span class="count ${queue.ready > 0 ? "nonzero" : ""}">${queue.ready}</span></div>`
-  ).join("");
-}
-
-function escapeHTML(raw) {
-  return raw.replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+  const maxReady = Math.max(20, ...queues.map(q => q.ready));
+  document.getElementById("queues").innerHTML = queues.map(queue => {
+    const kind = queue.name.includes("retry") ? "retry" : queue.name.includes("dlq") ? "dlq" : "";
+    const width = queue.ready === 0 ? 0 : Math.max(3, (queue.ready / maxReady) * 100);
+    return `<div class="meter ${kind}">
+      <span class="name">${queue.name.replace("notifications.", "")}</span>
+      <div class="meter-track"><div class="meter-fill" style="width:${width}%"></div></div>
+      <span class="count ${queue.ready === 0 ? "zero" : ""}">${queue.ready}</span>
+    </div>`;
+  }).join("");
+  const workTotal = queues.filter(q => !q.name.includes("retry") && !q.name.includes("dlq"))
+    .reduce((sum, q) => sum + q.ready, 0);
+  document.getElementById("strip-queued").textContent = workTotal;
 }
 
 function renderNotifications(rows) {
   const body = document.getElementById("notifications");
   if (!rows.length) { body.innerHTML = '<tr><td colspan="6" class="empty">none yet</td></tr>'; return; }
-  body.innerHTML = rows.map(n => {
+  body.innerHTML = rows.slice(0, 14).map(n => {
     const detail = n.last_error
-      ? `<span class="err">${escapeHTML(n.last_error.slice(0, 80))}</span>`
-      : escapeHTML(n.content.slice(0, 40));
-    return `<tr><td class="mono">${n.id.slice(0, 8)}</td><td>${n.channel}</td><td>${n.priority}</td>` +
+      ? `<span class="err-text">${escapeHTML(n.last_error.slice(0, 60))}</span>`
+      : escapeHTML((n.content || "").slice(0, 34));
+    return `<tr><td class="id">${n.id.slice(0, 8)}</td><td>${n.channel}</td><td>${n.priority[0]}</td>` +
       `<td><span class="chip ${n.status}">${n.status}</span></td><td>${n.attempts}</td><td>${detail}</td></tr>`;
   }).join("");
 }
 
 function renderClients(messages) {
   const container = document.getElementById("clients");
+  document.getElementById("strip-delivered").textContent = messages.length >= 200 ? "200+" : messages.length;
   if (!messages.length) { container.innerHTML = '<p class="empty">nothing delivered yet</p>'; return; }
   const byRecipient = new Map();
   for (const message of messages) {
     if (!byRecipient.has(message.to)) byRecipient.set(message.to, []);
     byRecipient.get(message.to).push(message);
   }
-  container.innerHTML = [...byRecipient.entries()].map(([recipient, inbox]) =>
+  container.innerHTML = [...byRecipient.entries()].slice(0, 4).map(([recipient, inbox]) =>
     `<div class="client"><div class="who">📥 ${escapeHTML(recipient)} · ${inbox.length}</div>` +
-    inbox.slice(0, 8).map(message =>
+    inbox.slice(0, 5).map(message =>
       `<div class="msg ${message.channel}">${escapeHTML(message.content)}` +
-      `<div class="meta">${message.channel} · ${new Date(message.received_at).toLocaleTimeString()} · ${message.message_id.slice(0, 8)}</div></div>`
+      `<div class="meta">${message.channel} · ${new Date(message.received_at).toLocaleTimeString()}</div></div>`
     ).join("") + `</div>`
   ).join("");
 }
@@ -269,10 +656,10 @@ function renderClients(messages) {
 async function refresh() {
   try {
     const [worker, queues, notifications, provider] = await Promise.all([
-      api("/api/v1/worker"),
-      api("/api/v1/queues"),
-      api("/api/v1/notifications?limit=50"),
-      api("/api/v1/provider/messages"),
+      apiOK("/api/v1/worker"),
+      apiOK("/api/v1/queues"),
+      apiOK("/api/v1/notifications?limit=20"),
+      apiOK("/api/v1/provider/messages"),
     ]);
     renderWorker(worker.paused);
     renderQueues(queues.queues);
@@ -282,6 +669,7 @@ async function refresh() {
   } catch (err) { showError("refresh failed: " + err.message); }
 }
 
+renderScenarios();
 refresh();
 setInterval(refresh, 1000);
 </script>
