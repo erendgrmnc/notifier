@@ -16,9 +16,16 @@ import (
 	"notifier/internal/api"
 	"notifier/internal/config"
 	"notifier/internal/observability"
+	"notifier/internal/service"
+	"notifier/internal/storage/postgres"
 )
 
 const requestTimeout = 30 * time.Second
+
+// realClock is the production Clock; tests inject fixed clocks instead.
+type realClock struct{}
+
+func (realClock) Now() time.Time { return time.Now() }
 
 func main() {
 	if err := run(); err != nil {
@@ -41,6 +48,11 @@ func run() error {
 
 	logger.Info("starting", slog.String("role", string(cfg.Role)), slog.Int("http_port", cfg.HTTPPort))
 
+	if err := postgres.Migrate(cfg.DatabaseURL); err != nil {
+		return fmt.Errorf("run migrations: %w", err)
+	}
+	logger.Info("migrations applied")
+
 	switch cfg.Role {
 	case config.RoleAPI, config.RoleAll:
 		return runAPI(ctx, cfg, logger)
@@ -58,9 +70,19 @@ func run() error {
 // runAPI serves HTTP until the context is cancelled, then drains
 // in-flight requests within the configured shutdown timeout.
 func runAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
+	pool, err := postgres.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("connect postgres: %w", err)
+	}
+	defer pool.Close()
+
+	repository := postgres.NewNotificationRepository(pool)
+	notifications := service.NewNotificationService(repository, realClock{})
+
 	router := api.NewRouter(api.RouterConfig{
 		Logger:         logger,
 		RequestTimeout: requestTimeout,
+		Notifications:  notifications,
 	})
 
 	server := &http.Server{
