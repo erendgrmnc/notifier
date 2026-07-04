@@ -449,6 +449,31 @@ func (repo *NotificationRepository) TouchQueued(ctx context.Context, id uuid.UUI
 	return nil
 }
 
+// CountNotificationStatuses returns lifetime totals per channel and
+// status. Unlike in-process counters these survive restarts: the table
+// is the system of record.
+func (repo *NotificationRepository) CountNotificationStatuses(ctx context.Context) ([]domain.StatusCount, error) {
+	rows, err := repo.pool.Query(ctx,
+		`SELECT channel, status, count(*) FROM notifications GROUP BY channel, status`)
+	if err != nil {
+		return nil, fmt.Errorf("count notification statuses: %w", err)
+	}
+	defer rows.Close()
+
+	var counts []domain.StatusCount
+	for rows.Next() {
+		var count domain.StatusCount
+		if err := rows.Scan(&count.Channel, &count.Status, &count.Count); err != nil {
+			return nil, fmt.Errorf("scan status count: %w", err)
+		}
+		counts = append(counts, count)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("count notification statuses: %w", err)
+	}
+	return counts, nil
+}
+
 // WorkerPaused reads the worker pause flag.
 func (repo *NotificationRepository) WorkerPaused(ctx context.Context) (bool, error) {
 	var paused bool

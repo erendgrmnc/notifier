@@ -162,6 +162,7 @@ func run() error {
 			MetricsHandler:   metrics.Handler(),
 			Readiness:        readiness,
 			Gatherer:         metrics,
+			LifetimeCounts:   repository,
 			WorkerMetricsURL: cfg.WorkerMetricsURL,
 			DashboardEnabled: cfg.DashboardEnabled,
 			WorkerControl:    repository,

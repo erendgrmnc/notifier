@@ -218,6 +218,7 @@
   .stat .value.bad { color: var(--fail); }
   .stat .value.rate { color: var(--signal); }
   .stat .label { font: 9.5px var(--mono); letter-spacing: .1em; color: var(--dim); text-transform: uppercase; margin-top: 2px; }
+  .stat .total { font: 9px var(--mono); color: var(--dim); margin-top: 1px; }
   .metric-row { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0;
     font: 11px var(--mono); border-bottom: 1px dashed rgba(38,50,82,.5); }
   .metric-row:last-child { border-bottom: 0; }
@@ -1114,17 +1115,27 @@ function sumValues(rows, predicate) {
 function renderMetrics(summary) {
   document.getElementById("metrics-sources").textContent = "· " + (summary.sources || []).join("+");
 
+  // Session numbers come from Prometheus (reset on process restart);
+  // totals come from the database and survive everything.
   const created = sumValues(summary.created);
   const sent = sumValues(summary.delivered, row => row.labels.status === "sent");
   const failed = sumValues(summary.delivered, row => row.labels.status === "failed");
   const terminal = sent + failed;
   const successRate = terminal > 0 ? (sent / terminal * 100).toFixed(1) + "%" : "–";
 
+  const lifetime = summary.lifetime || [];
+  const lifetimeOf = status => lifetime.filter(row => row.status === status).reduce((sum, row) => sum + row.count, 0);
+  const totalCreated = lifetime.reduce((sum, row) => sum + row.count, 0);
+  const totalSent = lifetimeOf("sent");
+  const totalFailed = lifetimeOf("failed");
+  const totalTerminal = totalSent + totalFailed;
+  const totalRate = totalTerminal > 0 ? (totalSent / totalTerminal * 100).toFixed(1) + "%" : "–";
+
   document.getElementById("metrics-headline").innerHTML = `
-    <div class="stat"><div class="value">${created}</div><div class="label">created</div></div>
-    <div class="stat"><div class="value ok">${sent}</div><div class="label">sent</div></div>
-    <div class="stat"><div class="value bad">${failed}</div><div class="label">failed</div></div>
-    <div class="stat"><div class="value rate">${successRate}</div><div class="label">success</div></div>`;
+    <div class="stat"><div class="value">${created}</div><div class="label">created</div><div class="total">Σ ${totalCreated}</div></div>
+    <div class="stat"><div class="value ok">${sent}</div><div class="label">sent</div><div class="total">Σ ${totalSent}</div></div>
+    <div class="stat"><div class="value bad">${failed}</div><div class="label">failed</div><div class="total">Σ ${totalFailed}</div></div>
+    <div class="stat"><div class="value rate">${successRate}</div><div class="label">success</div><div class="total">Σ ${totalRate}</div></div>`;
 
   const rows = [];
   if ((summary.attempts || []).length) {

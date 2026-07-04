@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,8 +9,18 @@ import (
 	"testing"
 	"time"
 
+	"notifier/internal/domain"
 	"notifier/internal/observability"
 )
+
+type fakeLifetimeCounter struct{}
+
+func (fakeLifetimeCounter) CountNotificationStatuses(context.Context) ([]domain.StatusCount, error) {
+	return []domain.StatusCount{
+		{Channel: domain.ChannelSMS, Status: domain.StatusSent, Count: 40},
+		{Channel: domain.ChannelSMS, Status: domain.StatusFailed, Count: 2},
+	}, nil
+}
 
 const workerExposition = `# HELP notifications_delivered_total x
 # TYPE notifications_delivered_total counter
@@ -36,7 +47,7 @@ func TestMetricsSummaryMergesWorkerSeries(t *testing.T) {
 	local.NotificationCreated("sms", "high")
 	local.ObserveHTTPRequest("/api/v1/notifications", "POST", 201, 3*time.Millisecond)
 
-	handler := newMetricsSummaryHandler(local, workerServer.URL)
+	handler := newMetricsSummaryHandler(local, fakeLifetimeCounter{}, workerServer.URL)
 	recorder := httptest.NewRecorder()
 	handler.serve(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/metrics/summary", nil))
 
@@ -48,8 +59,8 @@ func TestMetricsSummaryMergesWorkerSeries(t *testing.T) {
 		t.Fatalf("unmarshal summary: %v", err)
 	}
 
-	if len(summary.Sources) != 2 {
-		t.Errorf("sources = %v, want api+worker", summary.Sources)
+	if len(summary.Sources) != 3 {
+		t.Errorf("sources = %v, want api+worker+database", summary.Sources)
 	}
 	if len(summary.Created) != 1 || summary.Created[0].Value != 1 {
 		t.Errorf("created = %+v, want one sms/high sample", summary.Created)
@@ -62,6 +73,9 @@ func TestMetricsSummaryMergesWorkerSeries(t *testing.T) {
 	}
 	if sent != 12 {
 		t.Errorf("delivered sent = %v, want 12 from worker", sent)
+	}
+	if len(summary.Lifetime) != 2 || summary.Lifetime[0].Count+summary.Lifetime[1].Count != 42 {
+		t.Errorf("lifetime = %+v, want DB totals summing 42", summary.Lifetime)
 	}
 	if len(summary.DeliveryLatency) != 1 || summary.DeliveryLatency[0].Count != 17 {
 		t.Errorf("delivery latency = %+v, want count 17", summary.DeliveryLatency)
@@ -76,7 +90,7 @@ func TestMetricsSummaryWorksWithoutWorker(t *testing.T) {
 	local := observability.NewMetrics()
 	local.NotificationCreated("email", "normal")
 
-	handler := newMetricsSummaryHandler(local, "")
+	handler := newMetricsSummaryHandler(local, nil, "")
 	recorder := httptest.NewRecorder()
 	handler.serve(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/metrics/summary", nil))
 

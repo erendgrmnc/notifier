@@ -112,6 +112,13 @@ func CancellableStatuses() []Status {
 	return StatusesAllowedInto(StatusCancelled)
 }
 
+// StatusCount is one (channel, status) bucket of the lifetime totals.
+type StatusCount struct {
+	Channel Channel
+	Status  Status
+	Count   int
+}
+
 // Notification is one message to one recipient over one channel.
 type Notification struct {
 	ID                uuid.UUID

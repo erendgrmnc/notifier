@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sort"
@@ -10,12 +11,19 @@ import (
 	"github.com/prometheus/common/expfmt"
 	"github.com/prometheus/common/model"
 
+	"notifier/internal/domain"
 	"notifier/internal/observability"
 )
 
 // MetricsGatherer exposes the local registry for summarizing.
 type MetricsGatherer interface {
 	GatherFamilies() ([]*dto.MetricFamily, error)
+}
+
+// LifetimeCounter reads durable totals from the database; they survive
+// the process restarts that reset Prometheus counters.
+type LifetimeCounter interface {
+	CountNotificationStatuses(ctx context.Context) ([]domain.StatusCount, error)
 }
 
 // workerMetricsTimeout bounds the cross-service metrics fetch.
@@ -26,13 +34,15 @@ const workerMetricsTimeout = 2 * time.Second
 // live in the worker process; WorkerMetricsURL merges them in.
 type metricsSummaryHandler struct {
 	local     MetricsGatherer
+	lifetime  LifetimeCounter
 	workerURL string
 	client    *http.Client
 }
 
-func newMetricsSummaryHandler(local MetricsGatherer, workerURL string) *metricsSummaryHandler {
+func newMetricsSummaryHandler(local MetricsGatherer, lifetime LifetimeCounter, workerURL string) *metricsSummaryHandler {
 	return &metricsSummaryHandler{
 		local:     local,
+		lifetime:  lifetime,
 		workerURL: workerURL,
 		client:    &http.Client{Timeout: workerMetricsTimeout},
 	}
@@ -49,13 +59,22 @@ type latencySummary struct {
 	AvgMS  float64           `json:"avg_ms"`
 }
 
+type lifetimeCount struct {
+	Channel string `json:"channel"`
+	Status  string `json:"status"`
+	Count   int    `json:"count"`
+}
+
 type metricsSummary struct {
 	Created         []labeledValue   `json:"created"`
 	Delivered       []labeledValue   `json:"delivered"`
 	Attempts        []labeledValue   `json:"attempts"`
 	DeliveryLatency []latencySummary `json:"delivery_latency"`
 	HTTPLatency     []latencySummary `json:"http_latency"`
-	Sources         []string         `json:"sources"`
+	// Lifetime comes from the notifications table, not Prometheus, so it
+	// survives process restarts.
+	Lifetime []lifetimeCount `json:"lifetime"`
+	Sources  []string        `json:"sources"`
 }
 
 func (handler *metricsSummaryHandler) serve(writer http.ResponseWriter, request *http.Request) {
@@ -74,6 +93,17 @@ func (handler *metricsSummaryHandler) serve(writer http.ResponseWriter, request 
 		if workerFamilies, err := handler.fetchWorkerFamilies(request); err == nil {
 			accumulate(&summary, workerFamilies)
 			summary.Sources = append(summary.Sources, "worker")
+		}
+	}
+
+	if handler.lifetime != nil {
+		if counts, err := handler.lifetime.CountNotificationStatuses(request.Context()); err == nil {
+			for _, count := range counts {
+				summary.Lifetime = append(summary.Lifetime, lifetimeCount{
+					Channel: string(count.Channel), Status: string(count.Status), Count: count.Count,
+				})
+			}
+			summary.Sources = append(summary.Sources, "database")
 		}
 	}
 
