@@ -1,0 +1,15 @@
+# Binaries
+bin/
+*.exe
+*.test
+
+# Coverage
+coverage.out
+
+# Environment
+.env
+.env.local
+
+# IDE
+.idea/
+.vscode/
