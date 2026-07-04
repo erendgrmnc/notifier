@@ -51,8 +51,9 @@
   /* ---- layout: fills the viewport; panels scroll internally ---- */
   .layout { display: grid; grid-template-columns: 330px minmax(430px, 1fr) 330px; gap: 14px;
     align-items: stretch; flex: 1; min-height: 0; }
-  /* min-width:0 lets grid/flex children truncate instead of widening the page */
-  .layout > *, .stack > * { min-width: 0; }
+  /* min-width/height:0 lets grid/flex children shrink and scroll instead
+     of overflowing the page */
+  .layout > *, .stack > * { min-width: 0; min-height: 0; }
   .stack { display: flex; flex-direction: column; gap: 14px; min-height: 0; max-height: 100%; }
   .panel { background: var(--panel); border: 1px solid var(--edge); border-radius: 10px; padding: 14px;
     min-width: 0; display: flex; flex-direction: column; min-height: 0; }
@@ -122,9 +123,9 @@
   .hint code { color: var(--signal); font-family: var(--mono); }
 
   /* ---- queue meters ---- */
-  .meter { display: grid; grid-template-columns: 150px 1fr 44px; gap: 8px; align-items: center; padding: 4px 0; }
-  .meter .name { font: 11px var(--mono); color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
-  .meter-track { height: 8px; border-radius: 4px; background: var(--panel-2); border: 1px solid var(--edge); overflow: hidden; }
+  .meter { display: grid; grid-template-columns: 120px 1fr 44px; gap: 8px; align-items: center; padding: 2px 0; }
+  .meter .name { font: 10.5px var(--mono); color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
+  .meter-track { height: 7px; border-radius: 4px; background: var(--panel-2); border: 1px solid var(--edge); overflow: hidden; }
   .meter-fill { height: 100%; width: 0; background: var(--signal); border-radius: 3px; transition: width .4s ease; }
   .meter.retry .meter-fill { background: var(--info); }
   .meter.dlq .meter-fill { background: var(--fail); }
@@ -148,14 +149,16 @@
   .empty { color: var(--dim); font-style: italic; font-size: 12px; padding: 6px 0; }
 
   /* ---- client devices ---- */
-  .clients-panel { flex: 0 0 290px; }
-  .devices { display: grid; grid-template-columns: 185px 1fr; gap: 18px; flex: 1; min-height: 0; }
+  .clients-panel { flex: 0 0 340px; }
+  .devices { display: grid; grid-template-columns: 190px minmax(280px, 520px); gap: 26px;
+    justify-content: center; flex: 1; min-height: 0; }
+  .devices > div { display: flex; flex-direction: column; min-height: 0; }
   .device-label { text-align: center; font: 9.5px var(--mono); color: var(--dim);
-    letter-spacing: .14em; text-transform: uppercase; margin-top: 7px; }
+    letter-spacing: .14em; text-transform: uppercase; margin-top: 7px; flex-shrink: 0; }
 
   /* phone: sms bubbles + push banners */
   .phone { position: relative; border: 2px solid var(--edge); border-radius: 24px;
-    background: #0b0f19; padding: 24px 10px 16px; height: 100%;
+    background: #0b0f19; padding: 24px 10px 16px; flex: 1; min-height: 0;
     box-shadow: inset 0 0 26px rgba(110,168,255,.06); }
   .phone::before { content: ""; position: absolute; top: 9px; left: 50%; transform: translateX(-50%);
     width: 52px; height: 5px; border-radius: 3px; background: var(--edge); }
@@ -174,7 +177,7 @@
   .sms-bubble .t { display: block; color: rgba(233,237,246,.45); font: 8.5px var(--mono); margin-top: 2px; }
 
   /* desktop: email inbox */
-  .desktop { display: flex; flex-direction: column; height: 100%; min-width: 0; }
+  .desktop { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
   .monitor { flex: 1; border: 2px solid var(--edge); border-radius: 10px; background: #0b0f19;
     overflow: hidden; display: flex; flex-direction: column; min-height: 0;
     box-shadow: inset 0 0 30px rgba(110,168,255,.05); }
@@ -231,7 +234,7 @@
   .wire-panel > h2 button:hover { color: var(--paper); border-color: var(--dim); }
   .wire-panel > h2::after { content: none; }
   .wire-panel > h2 .rule { flex: 1; height: 1px; background: var(--edge); }
-  #wire { font: 11.5px var(--mono); max-height: 180px; overflow-y: auto; overflow-x: hidden; }
+  #wire { font: 11.5px var(--mono); max-height: 110px; overflow-y: auto; overflow-x: hidden; }
   .wire-line { display: flex; gap: 10px; align-items: baseline; padding: 2.5px 0;
     border-bottom: 1px solid rgba(38,50,82,.35); min-width: 0; }
   .wire-line .t { color: var(--dim); font-size: 10px; flex: 0 0 62px; }
