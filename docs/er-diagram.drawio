@@ -60,7 +60,7 @@
         </mxCell>
 
         <!-- templates entity -->
-        <mxCell id="templates" value="templates" style="swimlane;html=1;fontStyle=1;startSize=30;horizontal=1;fillColor=#d5e8d4;strokeColor=#82b366;swimlaneFillColor=#ffffff;" vertex="1" parent="1">
+        <mxCell id="templates" value="notification_templates" style="swimlane;html=1;fontStyle=1;startSize=30;horizontal=1;fillColor=#d5e8d4;strokeColor=#82b366;swimlaneFillColor=#ffffff;" vertex="1" parent="1">
           <mxGeometry x="620" y="80" width="300" height="174" as="geometry" />
         </mxCell>
         <mxCell id="t01" value="id : UUID — PK" style="text;html=1;align=left;spacingLeft=8;fontStyle=4;" vertex="1" parent="templates">
