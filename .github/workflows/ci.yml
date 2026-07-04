@@ -49,7 +49,10 @@ jobs:
         run: go vet ./...
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v6
+        # v8 runs golangci-lint v2, whose current releases are built with
+        # Go 1.25 — the v6 action's v1 line is capped at Go 1.24 and
+        # refuses to analyze this module.
+        uses: golangci/golangci-lint-action@v8
         with:
           version: latest
 
