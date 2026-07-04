@@ -17,10 +17,11 @@ const (
 )
 
 const (
-	defaultHTTPPort        = 8080
+	defaultHTTPPort        = 8081
 	defaultShutdownTimeout = 15 * time.Second
 	defaultLogLevel        = "info"
 	defaultDatabaseURL     = "postgres://notifier:notifier@localhost:5432/notifier?sslmode=disable"
+	defaultRabbitURL       = "amqp://notifier:notifier@localhost:5672/"
 )
 
 // Config holds every runtime tunable. Values come from environment
@@ -31,6 +32,7 @@ type Config struct {
 	ShutdownTimeout time.Duration
 	LogLevel        string
 	DatabaseURL     string
+	RabbitURL       string
 }
 
 // LookupFunc returns the value of an environment variable, or "" if unset.
@@ -46,6 +48,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		ShutdownTimeout: defaultShutdownTimeout,
 		LogLevel:        defaultLogLevel,
 		DatabaseURL:     defaultDatabaseURL,
+		RabbitURL:       defaultRabbitURL,
 	}
 
 	if roleValue := lookup("ROLE"); roleValue != "" {
@@ -69,6 +72,9 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 	if databaseURL := lookup("DATABASE_URL"); databaseURL != "" {
 		cfg.DatabaseURL = databaseURL
+	}
+	if rabbitURL := lookup("RABBITMQ_URL"); rabbitURL != "" {
+		cfg.RabbitURL = rabbitURL
 	}
 
 	return cfg, nil

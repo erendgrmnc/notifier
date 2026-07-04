@@ -38,6 +38,7 @@ services:
       ROLE: api
       HTTP_PORT: "8081"
       DATABASE_URL: postgres://notifier:notifier@postgres:5432/notifier?sslmode=disable
+      RABBITMQ_URL: amqp://notifier:notifier@rabbitmq:5672/
     ports:
       - "8081:8081"
     depends_on:
@@ -57,6 +58,7 @@ services:
     environment:
       ROLE: worker
       DATABASE_URL: postgres://notifier:notifier@postgres:5432/notifier?sslmode=disable
+      RABBITMQ_URL: amqp://notifier:notifier@rabbitmq:5672/
     depends_on:
       postgres:
         condition: service_healthy
