@@ -16,7 +16,8 @@ import (
 )
 
 type fakeWorkerControl struct {
-	paused bool
+	paused   bool
+	override string
 }
 
 func (fake *fakeWorkerControl) WorkerPaused(context.Context) (bool, error) {
@@ -26,6 +27,52 @@ func (fake *fakeWorkerControl) WorkerPaused(context.Context) (bool, error) {
 func (fake *fakeWorkerControl) SetWorkerPaused(_ context.Context, paused bool) error {
 	fake.paused = paused
 	return nil
+}
+
+func (fake *fakeWorkerControl) ProviderOverride(context.Context) (string, error) {
+	return fake.override, nil
+}
+
+func (fake *fakeWorkerControl) SetProviderOverride(_ context.Context, providerURL string) error {
+	fake.override = providerURL
+	return nil
+}
+
+func TestProviderOverrideRoundTrip(t *testing.T) {
+	router, control := newDashboardRouter(true)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPut, "/api/v1/provider",
+		strings.NewReader(`{"url":"https://webhook.site/abc-123"}`)))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("PUT /api/v1/provider = %d, want 200; body %s", recorder.Code, recorder.Body.String())
+	}
+	if control.override != "https://webhook.site/abc-123" {
+		t.Errorf("override = %q, want webhook.site URL", control.override)
+	}
+
+	var state struct {
+		Override  string `json:"override"`
+		Effective string `json:"effective"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &state); err != nil {
+		t.Fatalf("unmarshal provider state: %v", err)
+	}
+	if state.Effective != "https://webhook.site/abc-123" {
+		t.Errorf("effective = %q, want the override", state.Effective)
+	}
+
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPut, "/api/v1/provider", strings.NewReader(`{"url":""}`)))
+	if recorder.Code != http.StatusOK || control.override != "" {
+		t.Errorf("reset = %d override=%q, want 200 and empty", recorder.Code, control.override)
+	}
+
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPut, "/api/v1/provider", strings.NewReader(`{"url":"not a url"}`)))
+	if recorder.Code != http.StatusBadRequest {
+		t.Errorf("bad url = %d, want 400", recorder.Code)
+	}
 }
 
 type fakeQueueInspector struct{}

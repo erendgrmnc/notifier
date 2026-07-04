@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"notifier/internal/mockprovider"
 	"notifier/internal/observability"
@@ -21,10 +23,13 @@ func handleDashboard(writer http.ResponseWriter, _ *http.Request) {
 	_, _ = writer.Write(dashboardPage)
 }
 
-// WorkerControl toggles and reads the shared worker pause flag.
+// WorkerControl toggles and reads the shared worker pause flag and the
+// runtime provider override.
 type WorkerControl interface {
 	WorkerPaused(ctx context.Context) (bool, error)
 	SetWorkerPaused(ctx context.Context, paused bool) error
+	ProviderOverride(ctx context.Context) (string, error)
+	SetProviderOverride(ctx context.Context, providerURL string) error
 }
 
 // QueueInspector reads queue depths.
@@ -37,11 +42,75 @@ type dashboardHandler struct {
 	workerControl WorkerControl
 	queues        QueueInspector
 	providerStore *mockprovider.Store
-	logger        *slog.Logger
+	// defaultProvider is what deliveries target when no override is set,
+	// shown so the dashboard can display the effective destination.
+	defaultProvider string
+	logger          *slog.Logger
 }
 
 type workerStateResponse struct {
 	Paused bool `json:"paused"`
+}
+
+type providerStateResponse struct {
+	// Override is the runtime target; empty means the default applies.
+	Override string `json:"override"`
+	// Default is the statically configured PROVIDER_URL.
+	Default string `json:"default"`
+	// Effective is what the worker actually delivers to right now.
+	Effective string `json:"effective"`
+}
+
+func (handler *dashboardHandler) providerState(ctx context.Context) (providerStateResponse, error) {
+	override, err := handler.workerControl.ProviderOverride(ctx)
+	if err != nil {
+		return providerStateResponse{}, err
+	}
+	state := providerStateResponse{Override: override, Default: handler.defaultProvider}
+	state.Effective = state.Default
+	if override != "" {
+		state.Effective = override
+	}
+	return state, nil
+}
+
+func (handler *dashboardHandler) getProvider(writer http.ResponseWriter, request *http.Request) {
+	state, err := handler.providerState(request.Context())
+	if err != nil {
+		handler.writeInternalError(writer, request, err)
+		return
+	}
+	writeJSONResponse(writer, http.StatusOK, state)
+}
+
+func (handler *dashboardHandler) setProvider(writer http.ResponseWriter, request *http.Request) {
+	var payload struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+		writeErrorResponse(writer, http.StatusBadRequest, "malformed JSON body", nil)
+		return
+	}
+
+	target := strings.TrimSpace(payload.URL)
+	if target != "" {
+		parsed, err := url.Parse(target)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			writeErrorResponse(writer, http.StatusBadRequest, "url must be an absolute http(s) URL, or empty to reset", nil)
+			return
+		}
+	}
+
+	if err := handler.workerControl.SetProviderOverride(request.Context(), target); err != nil {
+		handler.writeInternalError(writer, request, err)
+		return
+	}
+	state, err := handler.providerState(request.Context())
+	if err != nil {
+		handler.writeInternalError(writer, request, err)
+		return
+	}
+	writeJSONResponse(writer, http.StatusOK, state)
 }
 
 func (handler *dashboardHandler) getWorkerState(writer http.ResponseWriter, request *http.Request) {

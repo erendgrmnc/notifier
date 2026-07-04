@@ -59,13 +59,18 @@ func pollQueueDepths(ctx context.Context, inspector *rabbit.Inspector, metrics *
 }
 
 // newSender selects the delivery provider: the real webhook sender when
-// PROVIDER_URL is configured, otherwise the logging simulator.
-func newSender(cfg config.Config, logger *slog.Logger) worker.Sender {
+// PROVIDER_URL is configured, otherwise the logging simulator. The
+// result is wrapped so a runtime override (set from the dashboard, e.g.
+// a webhook.site URL) takes precedence without a restart.
+func newSender(cfg config.Config, repository *postgres.NotificationRepository, logger *slog.Logger) worker.Sender {
+	var fallback delivery.Sender
 	if cfg.ProviderURL == "" {
 		logger.Warn("PROVIDER_URL not set; deliveries are simulated")
-		return delivery.NewLogSender(logger)
+		fallback = delivery.NewLogSender(logger)
+	} else {
+		fallback = delivery.NewWebhookSender(cfg.ProviderURL, cfg.ProviderTimeout)
 	}
-	return delivery.NewWebhookSender(cfg.ProviderURL, cfg.ProviderTimeout)
+	return delivery.NewSwitchableSender(repository, fallback, cfg.ProviderTimeout)
 }
 
 func main() {
@@ -172,21 +177,22 @@ func run() error {
 		}()
 
 		router := api.NewRouter(api.RouterConfig{
-			Logger:           logger,
-			RequestTimeout:   requestTimeout,
-			Notifications:    notifications,
-			Templates:        templates,
-			EventHub:         eventHub,
-			Metrics:          metrics,
-			MetricsHandler:   metrics.Handler(),
-			Readiness:        readiness,
-			Gatherer:         metrics,
-			LifetimeCounts:   repository,
-			WorkerMetricsURL: cfg.WorkerMetricsURL,
-			DashboardEnabled: cfg.DashboardEnabled,
-			WorkerControl:    repository,
-			Queues:           inspector,
-			ProviderStore:    mockprovider.NewStore(),
+			Logger:             logger,
+			RequestTimeout:     requestTimeout,
+			Notifications:      notifications,
+			Templates:          templates,
+			EventHub:           eventHub,
+			Metrics:            metrics,
+			MetricsHandler:     metrics.Handler(),
+			Readiness:          readiness,
+			Gatherer:           metrics,
+			LifetimeCounts:     repository,
+			WorkerMetricsURL:   cfg.WorkerMetricsURL,
+			DashboardEnabled:   cfg.DashboardEnabled,
+			WorkerControl:      repository,
+			Queues:             inspector,
+			ProviderStore:      mockprovider.NewStore(),
+			DefaultProviderURL: cfg.ProviderURL,
 		})
 		if cfg.DashboardEnabled {
 			logger.Info("testing dashboard enabled", slog.String("path", "/dashboard"))
@@ -213,7 +219,7 @@ func run() error {
 	}
 
 	if runsWorker {
-		queueWorker := worker.New(repository, newSender(cfg, logger), publisher, repository, realClock{}, logger, metrics,
+		queueWorker := worker.New(repository, newSender(cfg, repository, logger), publisher, repository, realClock{}, logger, metrics,
 			cfg.MaxDeliveryAttempts, cfg.RateLimitPerChannel, cfg.WorkerConcurrency)
 
 		componentGroup.Add(1)

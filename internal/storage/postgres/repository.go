@@ -496,6 +496,27 @@ func (repo *NotificationRepository) CountNotificationStatuses(ctx context.Contex
 	return counts, nil
 }
 
+// ProviderOverride reads the runtime provider URL override; empty means
+// the configured default applies.
+func (repo *NotificationRepository) ProviderOverride(ctx context.Context) (string, error) {
+	var providerURL string
+	err := repo.pool.QueryRow(ctx, `SELECT provider_url FROM worker_control WHERE id = 1`).Scan(&providerURL)
+	if err != nil {
+		return "", fmt.Errorf("read provider override: %w", err)
+	}
+	return providerURL, nil
+}
+
+// SetProviderOverride stores the runtime provider URL override.
+func (repo *NotificationRepository) SetProviderOverride(ctx context.Context, providerURL string) error {
+	_, err := repo.pool.Exec(ctx,
+		`UPDATE worker_control SET provider_url = $1, updated_at = now() WHERE id = 1`, providerURL)
+	if err != nil {
+		return fmt.Errorf("set provider override: %w", err)
+	}
+	return nil
+}
+
 // WorkerPaused reads the worker pause flag.
 func (repo *NotificationRepository) WorkerPaused(ctx context.Context) (bool, error) {
 	var paused bool

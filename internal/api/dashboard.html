@@ -408,6 +408,18 @@
       <p class="hint"><code>FAILME</code> in content simulates a provider outage (retries); <code>REJECTME</code> a permanent rejection (dead letter).</p>
       <p class="hint" id="send-result"></p>
     </div>
+    <div class="panel">
+      <h2>Provider</h2>
+      <p class="hint" style="margin-top:0">delivering to <code id="provider-effective">…</code></p>
+      <div class="row" style="margin-top:6px">
+        <input id="provider-url" placeholder="https://webhook.site/your-uuid" style="flex:1"/>
+      </div>
+      <div class="row">
+        <button class="primary" onclick="applyProvider()">Apply</button>
+        <button onclick="resetProvider()">Reset to default</button>
+      </div>
+      <p class="hint" id="provider-note"></p>
+    </div>
     <div class="panel fill">
       <h2>Templates</h2>
       <div id="template-list" class="scroll" style="max-height:150px"><p class="empty">none yet</p></div>
@@ -1053,6 +1065,46 @@ async function sendBurst(count) {
   refresh();
 }
 
+/* ---------- provider override ---------- */
+function describeProvider(url) {
+  if (!url) return "log simulator (no provider)";
+  if (url.includes("/provider/messages")) return "built-in mock (client devices below)";
+  try { return new URL(url).host + "…"; } catch { return url; }
+}
+
+function renderProvider(state) {
+  document.getElementById("provider-effective").textContent = describeProvider(state.effective);
+  document.getElementById("provider-effective").title = state.effective || "";
+  const note = document.getElementById("provider-note");
+  if (state.override) {
+    note.textContent = "override active — deliveries leave this machine; client devices and FAILME/REJECTME markers only work on the built-in mock";
+  } else {
+    note.textContent = "paste a webhook.site URL to deliver externally; takes effect within ~2s";
+  }
+}
+
+async function applyProvider() {
+  const input = document.getElementById("provider-url");
+  const { status, body } = await api("/api/v1/provider", {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url: input.value.trim() }),
+  });
+  if (status === 200) { input.value = ""; renderProvider(body); }
+  else { document.getElementById("provider-note").textContent = body.error || ("failed: " + status); }
+}
+
+async function resetProvider() {
+  const { status, body } = await api("/api/v1/provider", {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url: "" }),
+  });
+  if (status === 200) renderProvider(body);
+}
+
+async function refreshProvider() {
+  try { renderProvider(await apiOK("/api/v1/provider", undefined, true)); } catch { /* keep last */ }
+}
+
 /* ---------- worker + live panels ---------- */
 async function toggleWorker() {
   if (workerPaused === null) return;
@@ -1382,9 +1434,11 @@ function renderWsPanel() {
 renderScenarios();
 refresh();
 refreshTemplates();
+refreshProvider();
 addWsConnection("", true);
 setInterval(refresh, 1000);
 setInterval(refreshTemplates, 5000);
+setInterval(refreshProvider, 5000);
 </script>
 </body>
 </html>

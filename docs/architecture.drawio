@@ -13,7 +13,7 @@
         <mxCell id="apisvc" parent="1" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fontStyle=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="API Service (ROLE=api)" vertex="1">
           <mxGeometry height="340" width="220" x="180" y="170" as="geometry" />
         </mxCell>
-        <mxCell id="httpapi" parent="apisvc" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" value="HTTP API (chi)&#xa;/api/v1" vertex="1">
+        <mxCell id="httpapi" parent="apisvc" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" value="HTTP API (chi)&#xa;/api/v1 · /dashboard&#xa;+ mock provider" vertex="1">
           <mxGeometry height="60" width="160" x="30" y="40" as="geometry" />
         </mxCell>
         <mxCell id="wshub" parent="apisvc" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" value="WebSocket Hub&#xa;/ws" vertex="1">
@@ -49,7 +49,7 @@
         <mxCell id="workersvc" parent="1" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fontStyle=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="Worker (ROLE=worker)" vertex="1">
           <mxGeometry height="300" width="220" x="1040" y="170" as="geometry" />
         </mxCell>
-        <mxCell id="consumers" parent="workersvc" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" value="Per-channel consumers&#xa;(prefetch 50)" vertex="1">
+        <mxCell id="consumers" parent="workersvc" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" value="Per-channel consumers&#xa;(prefetch 50, 10 handlers,&#xa;pause-aware)" vertex="1">
           <mxGeometry height="60" width="160" x="30" y="40" as="geometry" />
         </mxCell>
         <mxCell id="limiter" parent="workersvc" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" value="Rate limiter&#xa;100 msg/s per channel" vertex="1">
@@ -58,10 +58,10 @@
         <mxCell id="retrypolicy" parent="workersvc" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" value="Retry policy&#xa;+ error classifier" vertex="1">
           <mxGeometry height="60" width="160" x="30" y="220" as="geometry" />
         </mxCell>
-        <mxCell id="provider" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="webhook.site&#xa;(external provider)" vertex="1">
+        <mxCell id="provider" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="Provider&#xa;webhook.site or built-in&#xa;mock (dashboard default)" vertex="1">
           <mxGeometry height="80" width="170" x="1410" y="280" as="geometry" />
         </mxCell>
-        <mxCell id="postgres" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#d5e8d4;strokeColor=#82b366;" value="PostgreSQL&#xa;notifications, notification_templates (versioned migrations)" vertex="1">
+        <mxCell id="postgres" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#d5e8d4;strokeColor=#82b366;" value="PostgreSQL&#xa;notifications, notification_templates, worker_control (versioned migrations)" vertex="1">
           <mxGeometry height="100" width="260" x="600" y="670" as="geometry" />
         </mxCell>
         <mxCell id="e1" edge="1" parent="1" source="client" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.35;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="httpapi" value="REST /api/v1">

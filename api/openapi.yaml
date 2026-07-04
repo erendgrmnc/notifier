@@ -485,6 +485,57 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/provider:
+    get:
+      tags: [system]
+      summary: Current delivery provider target
+      description: Mounted only when DASHBOARD_ENABLED.
+      operationId: getProvider
+      responses:
+        '200':
+          description: Override, configured default, and effective target.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderState'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [system]
+      summary: Override the delivery provider at runtime
+      description: |
+        Points the worker at a different provider (e.g. a webhook.site
+        URL) without a restart; takes effect within ~2 seconds. An empty
+        url resets to the configured default. Mounted only when
+        DASHBOARD_ENABLED.
+      operationId: setProvider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url:
+                  type: string
+                  example: https://webhook.site/your-uuid
+      responses:
+        '200':
+          description: Applied state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderState'
+        '400':
+          description: Not an absolute http(s) URL.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /provider/messages:
     post:
       tags: [system]
@@ -686,6 +737,19 @@ components:
         sent_at:
           type: string
           format: date-time
+
+    ProviderState:
+      type: object
+      properties:
+        override:
+          type: string
+          description: Runtime target; empty when the default applies.
+        default:
+          type: string
+          description: Statically configured PROVIDER_URL.
+        effective:
+          type: string
+          description: What the worker delivers to right now.
 
     WorkerState:
       type: object

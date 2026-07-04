@@ -96,6 +96,23 @@
           <mxGeometry x="0" y="78" width="300" height="48" as="geometry" />
         </mxCell>
 
+        <!-- worker_control: single-row operational flag -->
+        <mxCell id="workerctl" value="worker_control" style="swimlane;html=1;fontStyle=1;startSize=30;horizontal=1;fillColor=#fff2cc;strokeColor=#d6b656;swimlaneFillColor=#ffffff;" vertex="1" parent="1">
+          <mxGeometry x="80" y="500" width="300" height="126" as="geometry" />
+        </mxCell>
+        <mxCell id="wc1" value="id : SMALLINT — PK, CHECK (id = 1)" style="text;html=1;align=left;spacingLeft=8;fontStyle=4;" vertex="1" parent="workerctl">
+          <mxGeometry x="0" y="30" width="300" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="wc2" value="paused : BOOLEAN — default false" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="workerctl">
+          <mxGeometry x="0" y="54" width="300" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="wc3" value="updated_at : TIMESTAMPTZ — default now()" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="workerctl">
+          <mxGeometry x="0" y="78" width="300" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="wc4" value="single row: shared pause flag polled by workers" style="text;html=1;align=left;spacingLeft=8;fontStyle=2;fontColor=#666666;" vertex="1" parent="workerctl">
+          <mxGeometry x="0" y="102" width="300" height="24" as="geometry" />
+        </mxCell>
+
         <!-- logical relation: template renders notification content at enqueue -->
         <mxCell id="rel1" value="renders content at enqueue&#10;(logical 1 : N — no FK, content stored final)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.35;entryDx=0;entryDy=0;startArrow=none;endArrow=open;" edge="1" parent="1" source="templates" target="notifications">
           <mxGeometry relative="1" as="geometry" />
@@ -103,7 +120,7 @@
 
         <!-- legend -->
         <mxCell id="legend" value="PK = primary key · UQ = unique index · ∅ = nullable · batch_id groups rows created by one batch request (no parent table)" style="text;html=1;align=left;fontSize=11;fontColor=#666666;" vertex="1" parent="1">
-          <mxGeometry x="80" y="500" width="840" height="20" as="geometry" />
+          <mxGeometry x="80" y="650" width="840" height="20" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>

@@ -36,6 +36,9 @@ type RouterConfig struct {
 	WorkerControl    WorkerControl
 	Queues           QueueInspector
 	ProviderStore    *mockprovider.Store
+	// DefaultProviderURL is displayed as the effective target when no
+	// runtime override is set.
+	DefaultProviderURL string
 }
 
 // NewRouter builds the service router with the standard middleware chain:
@@ -75,10 +78,11 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 
 	notifications := &notificationHandler{notifications: cfg.Notifications, logger: cfg.Logger}
 	dashboard := &dashboardHandler{
-		workerControl: cfg.WorkerControl,
-		queues:        cfg.Queues,
-		providerStore: cfg.ProviderStore,
-		logger:        cfg.Logger,
+		workerControl:   cfg.WorkerControl,
+		queues:          cfg.Queues,
+		providerStore:   cfg.ProviderStore,
+		defaultProvider: cfg.DefaultProviderURL,
+		logger:          cfg.Logger,
 	}
 
 	router.Route("/api/v1", func(v1 chi.Router) {
@@ -100,6 +104,8 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 			v1.Get("/queues", dashboard.getQueueDepths)
 			v1.Get("/worker", dashboard.getWorkerState)
 			v1.Put("/worker", dashboard.setWorkerState)
+			v1.Get("/provider", dashboard.getProvider)
+			v1.Put("/provider", dashboard.setProvider)
 			v1.Get("/provider/messages", dashboard.getProviderMessages)
 			if cfg.Gatherer != nil {
 				summaryHandler := newMetricsSummaryHandler(cfg.Gatherer, cfg.LifetimeCounts, cfg.WorkerMetricsURL)
