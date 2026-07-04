@@ -322,8 +322,8 @@
       <h2>Notifications</h2>
       <div class="scroll">
         <table>
-          <thead><tr><th>id</th><th>ch</th><th>prio</th><th>status</th><th>att</th><th>detail</th></tr></thead>
-          <tbody id="notifications"><tr><td colspan="6" class="empty">reading…</td></tr></tbody>
+          <thead><tr><th>id</th><th>batch</th><th>ch</th><th>prio</th><th>status</th><th>att</th><th>detail</th></tr></thead>
+          <tbody id="notifications"><tr><td colspan="7" class="empty">reading…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -1137,7 +1137,7 @@ function renderQueues(queues) {
 
 function renderNotifications(rows) {
   const body = document.getElementById("notifications");
-  if (!rows.length) { body.innerHTML = '<tr><td colspan="6" class="empty">none yet</td></tr>'; return; }
+  if (!rows.length) { body.innerHTML = '<tr><td colspan="7" class="empty">none yet</td></tr>'; return; }
   body.innerHTML = rows.map(n => {
     let detail;
     if (n.last_error) {
@@ -1148,7 +1148,11 @@ function renderNotifications(rows) {
     } else {
       detail = escapeHTML((n.content || "").slice(0, 34));
     }
-    return `<tr><td class="id">${n.id.slice(0, 8)}</td><td>${n.channel}</td><td>${n.priority[0]}</td>` +
+    const batch = n.batch_id
+      ? `<span title="${escapeHTML(n.batch_id)}">${n.batch_id.slice(0, 8)}</span>`
+      : '<span style="color:var(--edge)">–</span>';
+    return `<tr><td class="id" title="${escapeHTML(n.id)}">${n.id.slice(0, 8)}</td><td class="id">${batch}</td>` +
+      `<td>${n.channel}</td><td>${n.priority[0]}</td>` +
       `<td><span class="chip ${n.status}">${n.status}</span></td><td>${n.attempts}</td><td>${detail}</td></tr>`;
   }).join("");
 }
