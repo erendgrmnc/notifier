@@ -214,10 +214,13 @@ detector.
 Tests are table-driven with hand-written fakes. They cover the state
 machine, validation, retry policy, rate limiting, idempotent replay,
 batch partial success, cursor pagination, the WebSocket hub, and handler
-status codes. Postgres integration tests exercise the guarded SQL against
-a real database (CI runs them in a service container; locally set
-`TEST_DATABASE_URL`). The dashboard's scenario runner doubles as an
-interactive acceptance suite.
+status codes. Integration tests exercise the guarded SQL against a real
+PostgreSQL (`TEST_DATABASE_URL`) and the queue topology, retry TTL
+routing, DLQ, and events fanout against a real RabbitMQ
+(`TEST_AMQP_URL`). CI runs both in service containers; locally the test
+scripts provision an isolated `notifier_test` database and vhost on the
+compose stack automatically. The dashboard's scenario runner doubles as
+an interactive acceptance suite.
 
 CI (GitHub Actions) runs build, vet, golangci-lint, and `go test -race`
 on every push.

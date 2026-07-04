@@ -32,6 +32,26 @@ if not "%SUITE%"=="all" if not "%SUITE%"=="unit" (
 )
 
 rem --- vet ---------------------------------------------------------------
+rem --- integration dependencies: provision isolated test DB + vhost when
+rem --- the compose stack is running (explicit env values are respected).
+if not defined TEST_DATABASE_URL (
+    docker exec notification-system-postgres-1 psql -U notifier -c "CREATE DATABASE notifier_test" >nul 2>&1
+    docker exec notification-system-postgres-1 true >nul 2>&1
+    if not errorlevel 1 (
+        set "TEST_DATABASE_URL=postgres://notifier:notifier@localhost:5432/notifier_test?sslmode=disable"
+        echo       postgres integration tests enabled ^(notifier_test^)
+    )
+)
+if not defined TEST_AMQP_URL (
+    docker exec notification-system-rabbitmq-1 rabbitmqctl -q add_vhost notifier_test >nul 2>&1
+    docker exec notification-system-rabbitmq-1 rabbitmqctl -q set_permissions -p notifier_test notifier ".*" ".*" ".*" >nul 2>&1
+    docker exec notification-system-rabbitmq-1 true >nul 2>&1
+    if not errorlevel 1 (
+        set "TEST_AMQP_URL=amqp://notifier:notifier@localhost:5672/notifier_test"
+        echo       rabbitmq integration tests enabled ^(notifier_test vhost^)
+    )
+)
+
 echo [1/4] vet: go vet ./...
 go vet ./... >"%WORK_DIR%\vet.out" 2>&1
 if errorlevel 1 (set "VET_RESULT=FAIL" & set "FAILED=1") else set "VET_RESULT=PASS"

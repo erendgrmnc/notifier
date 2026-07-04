@@ -85,6 +85,30 @@ run_step() { # label outfile command...
     fi
 }
 
+# --- integration dependencies -------------------------------------------------
+# When the compose stack is running, provision isolated test resources and
+# point the guarded integration tests at them: a notifier_test database and
+# a notifier_test vhost (so the live worker cannot consume test messages).
+# Explicit TEST_DATABASE_URL / TEST_AMQP_URL values are respected.
+
+provision_test_dependencies() {
+    if [ -z "${TEST_DATABASE_URL:-}" ] && docker exec notification-system-postgres-1 true 2>/dev/null; then
+        docker exec notification-system-postgres-1 \
+            psql -U notifier -c "CREATE DATABASE notifier_test" >/dev/null 2>&1 || true
+        TEST_DATABASE_URL="postgres://notifier:notifier@localhost:5432/notifier_test?sslmode=disable"
+        export TEST_DATABASE_URL
+        printf "%b\n" "${DIM}    postgres integration tests enabled (notifier_test)${RESET}"
+    fi
+    if [ -z "${TEST_AMQP_URL:-}" ] && docker exec notification-system-rabbitmq-1 true 2>/dev/null; then
+        docker exec notification-system-rabbitmq-1 rabbitmqctl -q add_vhost notifier_test >/dev/null 2>&1 || true
+        docker exec notification-system-rabbitmq-1 \
+            rabbitmqctl -q set_permissions -p notifier_test notifier ".*" ".*" ".*" >/dev/null 2>&1 || true
+        TEST_AMQP_URL="amqp://notifier:notifier@localhost:5672/notifier_test"
+        export TEST_AMQP_URL
+        printf "%b\n" "${DIM}    rabbitmq integration tests enabled (notifier_test vhost)${RESET}"
+    fi
+}
+
 # --- unit suite ---------------------------------------------------------------
 
 UNIT_TESTS=0
@@ -212,8 +236,8 @@ run_integration() {
 printf "%b\n" "${BOLD}Running suite: ${SUITE}${RESET}"
 
 case "$SUITE" in
-    all)         run_vet; run_unit; run_race; run_integration ;;
-    unit)        run_vet; run_unit; run_race ;;
+    all)         provision_test_dependencies; run_vet; run_unit; run_race; run_integration ;;
+    unit)        provision_test_dependencies; run_vet; run_unit; run_race ;;
     integration) run_integration ;;
     *) echo "test: unknown suite '$SUITE' (supported: all, unit, integration)" >&2; exit 1 ;;
 esac
