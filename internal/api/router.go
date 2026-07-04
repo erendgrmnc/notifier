@@ -18,6 +18,8 @@ type RouterConfig struct {
 	RequestTimeout time.Duration
 	Notifications  NotificationService
 	Templates      TemplateService
+	// EventHub serves the /ws live status stream when set.
+	EventHub *Hub
 
 	// Observability endpoints; nil-safe for tests.
 	Metrics        HTTPMetrics
@@ -47,11 +49,15 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 	}
 	router.Use(requestLogger(cfg.Logger))
 	router.Use(recoverPanic(cfg.Logger))
-	router.Use(middleware.Timeout(cfg.RequestTimeout))
+	// The per-request timeout is applied on the API group below, not
+	// globally: /ws is deliberately long-lived.
 
 	router.Get("/healthz", handleHealthz)
 	if cfg.Readiness != nil {
 		router.Get("/readyz", handleReadyz(cfg.Readiness))
+	}
+	if cfg.EventHub != nil {
+		router.Get("/ws", cfg.EventHub.serveWS)
 	}
 	if cfg.MetricsHandler != nil {
 		router.Method(http.MethodGet, "/metrics", cfg.MetricsHandler)
@@ -76,6 +82,7 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 	}
 
 	router.Route("/api/v1", func(v1 chi.Router) {
+		v1.Use(middleware.Timeout(cfg.RequestTimeout))
 		v1.Post("/notifications", notifications.create)
 		v1.Post("/notifications/batch", notifications.createBatch)
 		v1.Get("/notifications", notifications.list)

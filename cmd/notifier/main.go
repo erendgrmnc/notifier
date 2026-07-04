@@ -153,11 +153,30 @@ func run() error {
 		templateRepository := postgres.NewTemplateRepository(pool)
 		notifications := service.NewNotificationService(repository, repository, templateRepository, publisher, realClock{}, logger, metrics)
 		templates := service.NewTemplateService(templateRepository, realClock{})
+
+		// Live status stream: hub owns the clients; the events consumer
+		// feeds it from the fanout exchange (works across the api/worker
+		// process split).
+		eventHub := api.NewHub(logger)
+		componentGroup.Add(1)
+		go func() {
+			defer componentGroup.Done()
+			eventHub.Run(ctx)
+		}()
+		componentGroup.Add(1)
+		go func() {
+			defer componentGroup.Done()
+			if err := rabbit.ConsumeEvents(ctx, rabbitConn, logger, eventHub.BroadcastRaw); err != nil {
+				logger.Warn("event stream unavailable", slog.Any("error", err))
+			}
+		}()
+
 		router := api.NewRouter(api.RouterConfig{
 			Logger:           logger,
 			RequestTimeout:   requestTimeout,
 			Notifications:    notifications,
 			Templates:        templates,
+			EventHub:         eventHub,
 			Metrics:          metrics,
 			MetricsHandler:   metrics.Handler(),
 			Readiness:        readiness,
