@@ -83,25 +83,7 @@ func (svc *NotificationService) CreateBatch(ctx context.Context, inputs []Create
 			continue
 		}
 
-		notification := domain.Notification{
-			ID:             uuid.New(),
-			BatchID:        &batchID,
-			Recipient:      input.Recipient,
-			Channel:        input.Channel,
-			Content:        content,
-			Priority:       input.Priority,
-			Status:         domain.StatusPending,
-			IdempotencyKey: input.IdempotencyKey,
-			ScheduledAt:    input.ScheduledAt,
-			CreatedAt:      now,
-			UpdatedAt:      now,
-		}
-		if notification.Priority == "" {
-			notification.Priority = domain.PriorityNormal
-		}
-		if notification.ScheduledAt != nil {
-			notification.Status = domain.StatusScheduled
-		}
+		notification := newNotification(input, content, now, &batchID)
 
 		if input.IdempotencyKey != nil {
 			if existingID, duplicate := existingKeys[*input.IdempotencyKey]; duplicate {

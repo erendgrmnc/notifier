@@ -1,6 +1,7 @@
 package rabbit
 
 import (
+	"context"
 	"fmt"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -25,8 +26,10 @@ func NewInspector(conn *amqp.Connection) *Inspector {
 
 // QueueDepths reports ready counts for every service queue (work queues,
 // retry tiers, DLQ) via passive declares — cheaper than the management
-// API and needs no extra credentials.
-func (inspector *Inspector) QueueDepths() ([]QueueDepth, error) {
+// API and needs no extra credentials. The context bounds the probes;
+// amqp091's channel API has no per-call ctx, so cancellation is checked
+// between queue probes.
+func (inspector *Inspector) QueueDepths(ctx context.Context) ([]QueueDepth, error) {
 	channel, err := inspector.conn.Channel()
 	if err != nil {
 		return nil, fmt.Errorf("open inspect channel: %w", err)
@@ -44,6 +47,9 @@ func (inspector *Inspector) QueueDepths() ([]QueueDepth, error) {
 
 	depths := make([]QueueDepth, 0, len(names))
 	for _, name := range names {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("inspect queues: %w", err)
+		}
 		queue, err := channel.QueueDeclarePassive(name, true, false, false, false, nil)
 		if err != nil {
 			return nil, fmt.Errorf("inspect queue %s: %w", name, err)

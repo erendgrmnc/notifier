@@ -29,7 +29,7 @@ type WorkerControl interface {
 
 // QueueInspector reads queue depths.
 type QueueInspector interface {
-	QueueDepths() ([]rabbit.QueueDepth, error)
+	QueueDepths(ctx context.Context) ([]rabbit.QueueDepth, error)
 }
 
 // dashboardHandler serves the testing dashboard's control endpoints.
@@ -68,7 +68,7 @@ func (handler *dashboardHandler) setWorkerState(writer http.ResponseWriter, requ
 }
 
 func (handler *dashboardHandler) getQueueDepths(writer http.ResponseWriter, request *http.Request) {
-	depths, err := handler.queues.QueueDepths()
+	depths, err := handler.queues.QueueDepths(request.Context())
 	if err != nil {
 		handler.writeInternalError(writer, request, err)
 		return

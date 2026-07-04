@@ -115,6 +115,33 @@ type CreateInput struct {
 	IdempotencyKey *string
 }
 
+// newNotification builds the initial domain object for one create input:
+// identity, timestamps, priority default, and the pending-vs-scheduled
+// lifecycle start. Shared by single and batch creation so their
+// semantics can never drift.
+func newNotification(input CreateInput, content string, now time.Time, batchID *uuid.UUID) domain.Notification {
+	notification := domain.Notification{
+		ID:             uuid.New(),
+		BatchID:        batchID,
+		Recipient:      input.Recipient,
+		Channel:        input.Channel,
+		Content:        content,
+		Priority:       input.Priority,
+		Status:         domain.StatusPending,
+		IdempotencyKey: input.IdempotencyKey,
+		ScheduledAt:    input.ScheduledAt,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if notification.Priority == "" {
+		notification.Priority = domain.PriorityNormal
+	}
+	if notification.ScheduledAt != nil {
+		notification.Status = domain.StatusScheduled
+	}
+	return notification
+}
+
 // CreateResult is a created (or replayed) notification. Replayed means
 // the idempotency key matched an existing notification, which is
 // returned unchanged instead of creating a duplicate.
@@ -134,24 +161,7 @@ func (svc *NotificationService) Create(ctx context.Context, input CreateInput) (
 		return CreateResult{}, err
 	}
 
-	notification := domain.Notification{
-		ID:             uuid.New(),
-		Recipient:      input.Recipient,
-		Channel:        input.Channel,
-		Content:        content,
-		Priority:       input.Priority,
-		Status:         domain.StatusPending,
-		IdempotencyKey: input.IdempotencyKey,
-		ScheduledAt:    input.ScheduledAt,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-	}
-	if notification.Priority == "" {
-		notification.Priority = domain.PriorityNormal
-	}
-	if notification.ScheduledAt != nil {
-		notification.Status = domain.StatusScheduled
-	}
+	notification := newNotification(input, content, now, nil)
 
 	if err := domain.ValidateNew(notification, now); err != nil {
 		return CreateResult{}, err

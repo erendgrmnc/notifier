@@ -46,7 +46,7 @@ func pollQueueDepths(ctx context.Context, inspector *rabbit.Inspector, metrics *
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			depths, err := inspector.QueueDepths()
+			depths, err := inspector.QueueDepths(ctx)
 			if err != nil {
 				logger.Warn("queue depth poll failed", slog.Any("error", err))
 				continue

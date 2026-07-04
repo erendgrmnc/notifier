@@ -30,7 +30,7 @@ func (fake *fakeWorkerControl) SetWorkerPaused(_ context.Context, paused bool) e
 
 type fakeQueueInspector struct{}
 
-func (fakeQueueInspector) QueueDepths() ([]rabbit.QueueDepth, error) {
+func (fakeQueueInspector) QueueDepths(context.Context) ([]rabbit.QueueDepth, error) {
 	return []rabbit.QueueDepth{{Name: "notifications.sms", Ready: 3}}, nil
 }
 

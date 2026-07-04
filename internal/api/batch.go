@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -66,13 +65,11 @@ func (handler *notificationHandler) createBatch(writer http.ResponseWriter, requ
 		inputs[i] = item.toCreateInput()
 	}
 
-	started := time.Now()
 	result, err := handler.notifications.CreateBatch(request.Context(), inputs)
 	if err != nil {
 		handler.writeServiceError(writer, request, err)
 		return
 	}
-	_ = started // duration metrics arrive with the observability phase
 
 	writeJSONResponse(writer, http.StatusCreated, toBatchResponse(result))
 }

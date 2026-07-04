@@ -166,8 +166,8 @@ func (hub *Hub) serveWS(writer http.ResponseWriter, request *http.Request) {
 	}
 }
 
-// eventPayload re-marshals is unnecessary: events arrive as JSON from the
-// queue; BroadcastRaw extracts the notification id for filtering.
+// eventEnvelope extracts just the notification ID from a raw event
+// payload so BroadcastRaw can filter without re-marshalling.
 type eventEnvelope struct {
 	NotificationID uuid.UUID `json:"notification_id"`
 }
