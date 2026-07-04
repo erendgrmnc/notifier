@@ -370,6 +370,85 @@ func (repo *NotificationRepository) List(ctx context.Context, listQuery domain.L
 	return notifications, nil
 }
 
+// ClaimDueForQueue atomically moves due work to queued and returns it
+// for publishing: scheduled notifications whose time has come, plus
+// pending rows older than staleAfter (created but never published —
+// e.g. a broker outage at create time). SKIP LOCKED keeps concurrent
+// scheduler instances from claiming the same rows.
+func (repo *NotificationRepository) ClaimDueForQueue(ctx context.Context, staleAfter time.Duration, limit int) ([]domain.Notification, error) {
+	claim := `
+		UPDATE notifications SET status = 'queued', updated_at = now()
+		WHERE id IN (
+			SELECT id FROM notifications
+			WHERE (status = 'scheduled' AND scheduled_at <= now())
+			   OR (status = 'pending' AND created_at < now() - make_interval(secs => $1))
+			ORDER BY created_at
+			LIMIT $2
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING ` + notificationColumns
+
+	rows, err := repo.pool.Query(ctx, claim, staleAfter.Seconds(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("claim due notifications: %w", err)
+	}
+	defer rows.Close()
+
+	var claimed []domain.Notification
+	for rows.Next() {
+		notification, err := scanNotification(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan due notification: %w", err)
+		}
+		claimed = append(claimed, notification)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("claim due notifications: %w", err)
+	}
+	return claimed, nil
+}
+
+// ListStaleQueued returns queued rows untouched for staleAfter — their
+// publish may have been lost. Republishing is safe: the worker's claim
+// guard drops duplicates.
+func (repo *NotificationRepository) ListStaleQueued(ctx context.Context, staleAfter time.Duration, limit int) ([]domain.Notification, error) {
+	query := `SELECT ` + notificationColumns + `
+		FROM notifications
+		WHERE status = 'queued' AND updated_at < now() - make_interval(secs => $1)
+		ORDER BY updated_at
+		LIMIT $2`
+
+	rows, err := repo.pool.Query(ctx, query, staleAfter.Seconds(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list stale queued notifications: %w", err)
+	}
+	defer rows.Close()
+
+	var stale []domain.Notification
+	for rows.Next() {
+		notification, err := scanNotification(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan stale queued notification: %w", err)
+		}
+		stale = append(stale, notification)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list stale queued notifications: %w", err)
+	}
+	return stale, nil
+}
+
+// TouchQueued refreshes a queued row's updated_at after a republish so
+// the stale sweep does not pick it again immediately.
+func (repo *NotificationRepository) TouchQueued(ctx context.Context, id uuid.UUID) error {
+	_, err := repo.pool.Exec(ctx,
+		`UPDATE notifications SET updated_at = now() WHERE id = $1 AND status = 'queued'`, id)
+	if err != nil {
+		return fmt.Errorf("touch queued notification %s: %w", id, err)
+	}
+	return nil
+}
+
 // WorkerPaused reads the worker pause flag.
 func (repo *NotificationRepository) WorkerPaused(ctx context.Context) (bool, error) {
 	var paused bool

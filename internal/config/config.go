@@ -30,6 +30,11 @@ const (
 	defaultRateLimitPerChannel = 100
 	// defaultWorkerConcurrency is handler goroutines per channel queue.
 	defaultWorkerConcurrency = 10
+	// defaultSchedulerPollInterval is how often due/stuck rows are claimed.
+	defaultSchedulerPollInterval = time.Second
+	// defaultStalePendingAfter is how long a pending/queued row may sit
+	// before the sweeper assumes its publish was lost.
+	defaultStalePendingAfter = time.Minute
 )
 
 // Config holds every runtime tunable. Values come from environment
@@ -59,6 +64,10 @@ type Config struct {
 	RateLimitPerChannel int
 	// WorkerConcurrency is concurrent delivery handlers per channel.
 	WorkerConcurrency int
+	// SchedulerPollInterval paces the due-notification claimer.
+	SchedulerPollInterval time.Duration
+	// StalePendingAfter is the sweep cutoff for lost publishes.
+	StalePendingAfter time.Duration
 }
 
 // LookupFunc returns the value of an environment variable, or "" if unset.
@@ -69,17 +78,19 @@ type LookupFunc func(key string) string
 // defaults for unset keys and rejecting malformed values.
 func Load(lookup LookupFunc) (Config, error) {
 	cfg := Config{
-		Role:                RoleAll,
-		HTTPPort:            defaultHTTPPort,
-		ShutdownTimeout:     defaultShutdownTimeout,
-		LogLevel:            defaultLogLevel,
-		DatabaseURL:         defaultDatabaseURL,
-		RabbitURL:           defaultRabbitURL,
-		WorkerPrefetch:      defaultWorkerPrefetch,
-		ProviderTimeout:     defaultProviderTimeout,
-		MaxDeliveryAttempts: defaultMaxDeliveryAttempts,
-		RateLimitPerChannel: defaultRateLimitPerChannel,
-		WorkerConcurrency:   defaultWorkerConcurrency,
+		Role:                  RoleAll,
+		HTTPPort:              defaultHTTPPort,
+		ShutdownTimeout:       defaultShutdownTimeout,
+		LogLevel:              defaultLogLevel,
+		DatabaseURL:           defaultDatabaseURL,
+		RabbitURL:             defaultRabbitURL,
+		WorkerPrefetch:        defaultWorkerPrefetch,
+		ProviderTimeout:       defaultProviderTimeout,
+		MaxDeliveryAttempts:   defaultMaxDeliveryAttempts,
+		RateLimitPerChannel:   defaultRateLimitPerChannel,
+		WorkerConcurrency:     defaultWorkerConcurrency,
+		SchedulerPollInterval: defaultSchedulerPollInterval,
+		StalePendingAfter:     defaultStalePendingAfter,
 	}
 
 	if roleValue := lookup("ROLE"); roleValue != "" {
@@ -125,6 +136,12 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 	if err := parseInt(lookup, "WORKER_CONCURRENCY", &cfg.WorkerConcurrency); err != nil {
+		return Config{}, err
+	}
+	if err := parseDuration(lookup, "SCHEDULER_POLL_INTERVAL", &cfg.SchedulerPollInterval); err != nil {
+		return Config{}, err
+	}
+	if err := parseDuration(lookup, "STALE_PENDING_AFTER", &cfg.StalePendingAfter); err != nil {
 		return Config{}, err
 	}
 
