@@ -28,9 +28,11 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 	router.Use(middleware.Timeout(cfg.RequestTimeout))
 
 	router.Get("/healthz", handleHealthz)
+	router.Get("/docs", handleSwaggerUI)
 
 	notifications := &notificationHandler{notifications: cfg.Notifications, logger: cfg.Logger}
 	router.Route("/api/v1", func(v1 chi.Router) {
+		v1.Get("/openapi.yaml", handleOpenAPISpec)
 		v1.Post("/notifications", notifications.create)
 		v1.Get("/notifications/{id}", notifications.get)
 	})

@@ -1,0 +1,230 @@
+openapi: 3.0.3
+info:
+  title: Notification Service API
+  description: |
+    Event-driven notification system delivering messages over SMS, Email,
+    and Push channels. Notifications are accepted via this API, queued in
+    RabbitMQ, and delivered asynchronously by workers — creation returning
+    201 means "accepted for delivery", not "delivered". Track progress by
+    polling the resource or (in a later phase) the WebSocket stream.
+  version: 1.0.0
+servers:
+  - url: http://localhost:8081
+    description: Local docker compose stack
+
+# The API is intentionally unauthenticated in this assessment scope.
+security: []
+
+tags:
+  - name: notifications
+    description: Create and track notifications
+  - name: system
+    description: Health and diagnostics
+
+paths:
+  /api/v1/notifications:
+    post:
+      tags: [notifications]
+      summary: Create a notification
+      description: |
+        Validates and persists a notification, then queues it for
+        asynchronous delivery. When `scheduled_at` is set the notification
+        is stored as `scheduled` and enqueued at the scheduled time
+        instead. Exactly one recipient per notification.
+      operationId: createNotification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNotificationRequest'
+      responses:
+        '201':
+          description: Notification accepted for delivery.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '400':
+          description: Malformed JSON or failed validation. Every failing field is listed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/notifications/{id}:
+    get:
+      tags: [notifications]
+      summary: Get a notification by ID
+      description: Returns the full notification resource including delivery state.
+      operationId: getNotification
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Notification UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: The notification.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '400':
+          description: The id is not a valid UUID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: No notification with this ID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /healthz:
+    get:
+      tags: [system]
+      summary: Liveness probe
+      description: Process liveness only; dependency readiness is a separate endpoint.
+      operationId: healthz
+      responses:
+        '200':
+          description: Process is alive.
+
+components:
+  responses:
+    InternalError:
+      description: Unexpected server error. The correlation ID from the X-Request-ID response header links the error to server logs.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    Channel:
+      type: string
+      description: Delivery medium.
+      enum: [sms, email, push]
+
+    Priority:
+      type: string
+      description: Processing priority. Defaults to normal.
+      enum: [high, normal, low]
+
+    Status:
+      type: string
+      description: |
+        Notification lifecycle state:
+        * `pending` — persisted, not yet handed to the queue
+        * `scheduled` — waiting for its future delivery time
+        * `queued` — in the message queue awaiting a worker
+        * `processing` — a worker is delivering it
+        * `retrying` — delivery failed, waiting for the next attempt
+        * `sent` — provider accepted the message (terminal)
+        * `failed` — delivery exhausted or permanently rejected (terminal)
+        * `cancelled` — cancelled before delivery (terminal)
+      enum: [pending, scheduled, queued, processing, retrying, sent, failed, cancelled]
+
+    CreateNotificationRequest:
+      type: object
+      required: [recipient, channel, content]
+      properties:
+        recipient:
+          type: string
+          description: |
+            Channel-specific address: E.164 phone number for sms
+            (e.g. +905551234567), email address for email, device token
+            for push.
+          example: "+905551234567"
+        channel:
+          $ref: '#/components/schemas/Channel'
+        content:
+          type: string
+          description: |
+            Message body. Limits: sms 160 characters, push 512 bytes,
+            email 100 KB.
+          example: "Your order has shipped."
+        priority:
+          $ref: '#/components/schemas/Priority'
+        scheduled_at:
+          type: string
+          format: date-time
+          description: Future delivery time. Must be in the future when provided.
+        idempotency_key:
+          type: string
+          description: |
+            Client-supplied key preventing duplicate creation on retries.
+            Reserved — enforced in an upcoming release.
+
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        batch_id:
+          type: string
+          format: uuid
+          description: Present when created via a batch request.
+        recipient:
+          type: string
+        channel:
+          $ref: '#/components/schemas/Channel'
+        content:
+          type: string
+        priority:
+          $ref: '#/components/schemas/Priority'
+        status:
+          $ref: '#/components/schemas/Status'
+        scheduled_at:
+          type: string
+          format: date-time
+        attempts:
+          type: integer
+          description: Delivery attempts made so far.
+        last_error:
+          type: string
+          description: Most recent delivery error, if any.
+        provider_message_id:
+          type: string
+          description: Provider-issued message ID once sent.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        sent_at:
+          type: string
+          format: date-time
+
+    FieldError:
+      type: object
+      properties:
+        field:
+          type: string
+          example: recipient
+        message:
+          type: string
+          example: must be an E.164 phone number, e.g. +905551234567
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          example: validation failed
+        fields:
+          type: array
+          description: Present on validation failures; one entry per failing field.
+          items:
+            $ref: '#/components/schemas/FieldError'
