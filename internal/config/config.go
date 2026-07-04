@@ -20,6 +20,7 @@ const (
 	defaultHTTPPort        = 8080
 	defaultShutdownTimeout = 15 * time.Second
 	defaultLogLevel        = "info"
+	defaultDatabaseURL     = "postgres://notifier:notifier@localhost:5432/notifier?sslmode=disable"
 )
 
 // Config holds every runtime tunable. Values come from environment
@@ -29,6 +30,7 @@ type Config struct {
 	HTTPPort        int
 	ShutdownTimeout time.Duration
 	LogLevel        string
+	DatabaseURL     string
 }
 
 // LookupFunc returns the value of an environment variable, or "" if unset.
@@ -43,6 +45,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		HTTPPort:        defaultHTTPPort,
 		ShutdownTimeout: defaultShutdownTimeout,
 		LogLevel:        defaultLogLevel,
+		DatabaseURL:     defaultDatabaseURL,
 	}
 
 	if roleValue := lookup("ROLE"); roleValue != "" {
@@ -63,6 +66,9 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 	if levelValue := lookup("LOG_LEVEL"); levelValue != "" {
 		cfg.LogLevel = levelValue
+	}
+	if databaseURL := lookup("DATABASE_URL"); databaseURL != "" {
+		cfg.DatabaseURL = databaseURL
 	}
 
 	return cfg, nil
