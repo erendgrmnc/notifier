@@ -20,11 +20,12 @@
     --sans: system-ui, "Segoe UI", sans-serif;
   }
   * { box-sizing: border-box; margin: 0; }
-  body { background: var(--ink); color: var(--paper); font: 13.5px/1.5 var(--sans); padding: 16px 18px; }
+  body { background: var(--ink); color: var(--paper); font: 13.5px/1.5 var(--sans);
+    padding: 16px 18px; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
 
   /* ---- header strip ---- */
   header {
-    display: flex; align-items: center; gap: 18px;
+    display: flex; align-items: center; gap: 18px; flex-shrink: 0;
     border: 1px solid var(--edge); border-radius: 10px;
     background: linear-gradient(180deg, var(--panel-2), var(--panel));
     padding: 10px 16px; margin-bottom: 14px;
@@ -47,13 +48,22 @@
   #error-bar { display:none; margin-bottom: 12px; border: 1px solid var(--fail); color: var(--fail);
     background: rgba(255,93,93,.08); border-radius: 8px; padding: 6px 12px; font: 12px var(--mono); }
 
-  /* ---- layout ---- */
-  .layout { display: grid; grid-template-columns: 330px minmax(430px, 1fr) 330px; gap: 14px; align-items: start; }
-  @media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } }
+  /* ---- layout: fills the viewport; panels scroll internally ---- */
+  .layout { display: grid; grid-template-columns: 330px minmax(430px, 1fr) 330px; gap: 14px;
+    align-items: stretch; flex: 1; min-height: 0; }
   /* min-width:0 lets grid/flex children truncate instead of widening the page */
   .layout > *, .stack > * { min-width: 0; }
-  .stack { display: grid; gap: 14px; }
-  .panel { background: var(--panel); border: 1px solid var(--edge); border-radius: 10px; padding: 14px; min-width: 0; }
+  .stack { display: flex; flex-direction: column; gap: 14px; min-height: 0; max-height: 100%; }
+  .panel { background: var(--panel); border: 1px solid var(--edge); border-radius: 10px; padding: 14px;
+    min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+  .panel.fill { flex: 1; }
+  .scroll { overflow-y: auto; min-height: 0; }
+  .panel.fill > .scroll { flex: 1; }
+  @media (max-width: 1100px) {
+    body { height: auto; overflow: auto; display: block; }
+    .layout { grid-template-columns: 1fr; }
+    .panel.fill > .scroll { max-height: 320px; }
+  }
   .panel > h2 {
     font: 600 10.5px var(--mono); letter-spacing: .18em; text-transform: uppercase;
     color: var(--dim); margin-bottom: 12px;
@@ -204,16 +214,16 @@
 <div id="error-bar" role="alert"></div>
 
 <div class="layout">
-  <!-- left: scenarios + metrics -->
+  <!-- left: metrics + scenarios -->
   <div class="stack">
-    <div class="panel">
-      <h2>Scenarios</h2>
-      <div id="scenarios"></div>
-    </div>
     <div class="panel">
       <h2>Pipeline metrics <span id="metrics-sources" class="sources"></span></h2>
       <div id="metrics-headline" class="headline"></div>
-      <div id="metrics-detail"><p class="empty">reading…</p></div>
+      <div id="metrics-detail" class="scroll" style="max-height:190px"><p class="empty">reading…</p></div>
+    </div>
+    <div class="panel fill">
+      <h2>Scenarios</h2>
+      <div id="scenarios" class="scroll"></div>
     </div>
   </div>
 
@@ -227,12 +237,14 @@
       <h2>Queues</h2>
       <div id="queues"><p class="empty">reading…</p></div>
     </div>
-    <div class="panel">
+    <div class="panel fill">
       <h2>Notifications</h2>
-      <table>
-        <thead><tr><th>id</th><th>ch</th><th>prio</th><th>status</th><th>att</th><th>detail</th></tr></thead>
-        <tbody id="notifications"><tr><td colspan="6" class="empty">reading…</td></tr></tbody>
-      </table>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>id</th><th>ch</th><th>prio</th><th>status</th><th>att</th><th>detail</th></tr></thead>
+          <tbody id="notifications"><tr><td colspan="6" class="empty">reading…</td></tr></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -265,9 +277,9 @@
       <p class="hint"><code>FAILME</code> in content simulates a provider outage (retries); <code>REJECTME</code> a permanent rejection (dead letter).</p>
       <p class="hint" id="send-result"></p>
     </div>
-    <div class="panel">
+    <div class="panel fill">
       <h2>Clients</h2>
-      <div id="clients"><p class="empty">nothing delivered yet</p></div>
+      <div id="clients" class="scroll"><p class="empty">nothing delivered yet</p></div>
     </div>
   </div>
 </div>
@@ -766,7 +778,7 @@ function renderQueues(queues) {
 function renderNotifications(rows) {
   const body = document.getElementById("notifications");
   if (!rows.length) { body.innerHTML = '<tr><td colspan="6" class="empty">none yet</td></tr>'; return; }
-  body.innerHTML = rows.slice(0, 14).map(n => {
+  body.innerHTML = rows.map(n => {
     const detail = n.last_error
       ? `<span class="err-text">${escapeHTML(n.last_error.slice(0, 60))}</span>`
       : escapeHTML((n.content || "").slice(0, 34));
