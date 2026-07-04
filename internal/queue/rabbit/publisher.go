@@ -11,6 +11,25 @@ import (
 	"notifier/internal/domain"
 )
 
+// AMQP message priorities within the queues' x-max-priority=10 range.
+const (
+	amqpPriorityHigh   uint8 = 9
+	amqpPriorityNormal uint8 = 5
+	amqpPriorityLow    uint8 = 1
+)
+
+// amqpPriority maps the domain priority onto the broker's numeric scale.
+func amqpPriority(priority domain.Priority) uint8 {
+	switch priority {
+	case domain.PriorityHigh:
+		return amqpPriorityHigh
+	case domain.PriorityLow:
+		return amqpPriorityLow
+	default:
+		return amqpPriorityNormal
+	}
+}
+
 // Publisher sends notification messages with publisher confirms, so a
 // successful publish means the broker has durably accepted the message.
 type Publisher struct {
@@ -50,6 +69,7 @@ func (publisher *Publisher) PublishCreated(ctx context.Context, notification dom
 		amqp.Publishing{
 			ContentType:  "application/json",
 			DeliveryMode: amqp.Persistent,
+			Priority:     amqpPriority(notification.Priority),
 			Body:         body,
 		},
 	)
