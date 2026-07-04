@@ -6,6 +6,18 @@
 # so `make test` works on machines without gcc; CI always runs -race.
 RACEFLAG := $(if $(filter 1,$(shell go env CGO_ENABLED)),-race,)
 
+# On native Windows make (no sh in PATH), dispatch to the .bat twins;
+# elsewhere use the POSIX scripts.
+ifeq ($(OS),Windows_NT)
+DEPLOY_SCRIPT = scripts\deploy.bat
+TEST_SCRIPT   = scripts\test.bat
+NULL_DEVICE   = NUL
+else
+DEPLOY_SCRIPT = ./scripts/deploy.sh
+TEST_SCRIPT   = ./scripts/test.sh
+NULL_DEVICE   = /dev/null
+endif
+
 ## up: start the full stack (postgres, rabbitmq, api, worker)
 up:
 	docker compose up -d --build
@@ -27,7 +39,7 @@ test-verbose:
 lint:
 	gofmt -l .
 	go vet ./...
-	@golangci-lint run ./... 2>/dev/null || echo "golangci-lint not installed; skipped (CI runs it)"
+	@golangci-lint run ./... 2>$(NULL_DEVICE) || echo "golangci-lint not installed; skipped (CI runs it)"
 
 ## run: run api+worker in one process against a running compose stack
 run:
@@ -35,8 +47,8 @@ run:
 
 ## deploy: build the image and roll the local stack
 deploy:
-	./scripts/deploy.sh local
+	$(DEPLOY_SCRIPT) local
 
 ## smoke: full test matrix including live e2e checks
 smoke:
-	./scripts/test.sh all
+	$(TEST_SCRIPT) all
