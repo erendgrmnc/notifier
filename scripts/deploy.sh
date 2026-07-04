@@ -7,6 +7,9 @@
 #        test/prod — reserved for future environments
 set -eu
 
+# Anchor to the repo root so the script works from any directory.
+cd "$(dirname "$0")/.."
+
 IMAGE_NAME="notifier"
 # Single source for the local API address; override with API_BASE=...
 API_BASE="${API_BASE:-http://localhost:8081}"

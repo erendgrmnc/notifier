@@ -12,6 +12,9 @@
 #   integration  live end-to-end regression checks against the running stack
 set -u
 
+# Anchor to the repo root so the script works from any directory.
+cd "$(dirname "$0")/.."
+
 SUITE="${1:-all}"
 # Single source for the local API address; override with API_BASE=...
 API_BASE="${API_BASE:-http://localhost:8081}"

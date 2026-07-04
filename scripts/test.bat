@@ -5,6 +5,9 @@ rem Usage: scripts\test.bat [suite]
 rem   suite: all (default) | unit | integration
 setlocal enabledelayedexpansion
 
+rem Anchor to the repo root so the script works from any directory.
+cd /d "%~dp0.."
+
 set "SUITE=%~1"
 if "%SUITE%"=="" set "SUITE=all"
 rem Single source for the local API address; override by setting API_BASE.

@@ -7,6 +7,9 @@ rem        local - build the image and run the full stack on Docker Desktop
 rem        test/prod - reserved for future environments
 setlocal enabledelayedexpansion
 
+rem Anchor to the repo root so the script works from any directory.
+cd /d "%~dp0.."
+
 set "IMAGE_NAME=notifier"
 rem Single source for the local API address; override by setting API_BASE.
 if not defined API_BASE set "API_BASE=http://localhost:8081"
