@@ -34,6 +34,7 @@
   .wordmark span { color: var(--signal); }
   .strip-item { font: 11px var(--mono); color: var(--dim); }
   .strip-item b { color: var(--paper); font-weight: 600; }
+  #strip-live.live { color: var(--ok); }
   header .spacer { flex: 1; }
   .worker-switch {
     font: 600 12px var(--mono); letter-spacing: .06em;
@@ -261,6 +262,7 @@
   <div class="wordmark">notifier<span>://</span>testing dashboard</div>
   <div class="strip-item">queued <b id="strip-queued">–</b></div>
   <div class="strip-item">delivered <b id="strip-delivered">–</b></div>
+  <div class="strip-item" id="strip-live" title="WebSocket status stream">○ polling</div>
   <div class="strip-item" id="strip-note"></div>
   <div class="spacer"></div>
   <button id="worker-toggle" class="worker-switch" onclick="toggleWorker()">worker: …</button>
@@ -1182,9 +1184,44 @@ async function refresh() {
   } catch (err) { showError("refresh failed: " + err.message); }
 }
 
+/* ---------- live event stream ---------- */
+// Events trigger an immediate (debounced) refresh, so the panels react
+// the moment the worker flips a status instead of waiting for the poll.
+let wsEventCount = 0;
+let refreshQueued = false;
+
+function scheduleInstantRefresh() {
+  if (refreshQueued) return;
+  refreshQueued = true;
+  setTimeout(() => { refreshQueued = false; refresh(); }, 150);
+}
+
+function connectEventStream(attempt = 0) {
+  const indicator = document.getElementById("strip-live");
+  const socket = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+
+  socket.onopen = () => {
+    indicator.textContent = "● live";
+    indicator.className = "strip-item live";
+    attempt = 0;
+  };
+  socket.onmessage = () => {
+    wsEventCount++;
+    indicator.textContent = "● live · " + wsEventCount;
+    scheduleInstantRefresh();
+  };
+  socket.onclose = () => {
+    indicator.textContent = "○ polling";
+    indicator.className = "strip-item";
+    const backoffMs = Math.min(15000, 1000 * 2 ** attempt);
+    setTimeout(() => connectEventStream(attempt + 1), backoffMs);
+  };
+}
+
 renderScenarios();
 refresh();
 refreshTemplates();
+connectEventStream();
 setInterval(refresh, 1000);
 setInterval(refreshTemplates, 5000);
 </script>
