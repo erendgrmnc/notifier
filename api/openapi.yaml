@@ -387,6 +387,28 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /ws:
+    get:
+      tags: [system]
+      summary: Live status event stream (WebSocket)
+      description: |
+        Upgrades to a WebSocket. Each frame is a JSON status event:
+        {notification_id, status, channel, attempts, last_error?, occurred_at}.
+        Optional ?id=<uuid> filters the stream to one notification.
+        Events are best-effort and transient; the REST resources remain
+        the source of truth.
+      operationId: statusStream
+      parameters:
+        - name: id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '101':
+          description: Switching protocols.
+
   /healthz:
     get:
       tags: [system]
