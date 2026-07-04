@@ -19,6 +19,10 @@ test:
 	$(if $(RACEFLAG),,@echo "note: cgo unavailable, running without -race (CI runs it)")
 	go test $(RACEFLAG) ./...
 
+## test-verbose: every test name and result, plus per-package coverage
+test-verbose:
+	go test -v -cover $(RACEFLAG) ./...
+
 ## lint: formatting, vet, and golangci-lint when installed
 lint:
 	gofmt -l .
