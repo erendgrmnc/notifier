@@ -20,6 +20,7 @@ import (
 	"notifier/internal/mockprovider"
 	"notifier/internal/observability"
 	"notifier/internal/queue/rabbit"
+	"notifier/internal/scheduler"
 	"notifier/internal/service"
 	"notifier/internal/storage/postgres"
 	"notifier/internal/worker"
@@ -177,6 +178,15 @@ func run() error {
 			}
 		}()
 		logger.Info("api listening", slog.Int("port", cfg.HTTPPort))
+
+		// The scheduler runs with the api role: it fires scheduled
+		// notifications and recovers rows whose publish was lost.
+		dueScheduler := scheduler.New(repository, publisher, logger, cfg.SchedulerPollInterval, cfg.StalePendingAfter)
+		componentGroup.Add(1)
+		go func() {
+			defer componentGroup.Done()
+			dueScheduler.Run(ctx)
+		}()
 	}
 
 	if runsWorker {
