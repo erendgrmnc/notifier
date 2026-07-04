@@ -8,6 +8,22 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: notifier
+          POSTGRES_PASSWORD: notifier
+          POSTGRES_DB: notifier_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U notifier"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://notifier:notifier@localhost:5432/notifier_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
 
