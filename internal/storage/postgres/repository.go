@@ -106,6 +106,72 @@ func (repo *NotificationRepository) UpdateStatus(ctx context.Context, id uuid.UU
 	return nil
 }
 
+// ClaimForProcessing atomically claims a notification for delivery:
+// guarded transition to processing, attempt counter incremented, and the
+// claimed row returned — one round trip. Returns domain.ErrNotFound for
+// missing rows and domain.ErrInvalidTransition when the guard rejects
+// (cancelled, already sent, or concurrently processing).
+func (repo *NotificationRepository) ClaimForProcessing(ctx context.Context, id uuid.UUID, allowedFrom ...domain.Status) (domain.Notification, error) {
+	claim := `
+		UPDATE notifications
+		SET status = 'processing', attempts = attempts + 1, updated_at = now()
+		WHERE id = $1 AND status::text = ANY($2)
+		RETURNING ` + notificationColumns
+
+	fromValues := make([]string, len(allowedFrom))
+	for i, status := range allowedFrom {
+		fromValues[i] = string(status)
+	}
+
+	row := repo.pool.QueryRow(ctx, claim, id, fromValues)
+	notification, err := scanNotification(row)
+	if err == nil {
+		return notification, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return domain.Notification{}, fmt.Errorf("claim notification %s: %w", id, err)
+	}
+
+	// Zero rows: distinguish missing from guard-rejected. A failed lookup
+	// surfaces as infrastructure error so callers requeue, not settle.
+	_, lookupErr := repo.GetByID(ctx, id)
+	switch {
+	case errors.Is(lookupErr, domain.ErrNotFound):
+		return domain.Notification{}, domain.ErrNotFound
+	case lookupErr != nil:
+		return domain.Notification{}, fmt.Errorf("disambiguate rejected claim for %s: %w", id, lookupErr)
+	default:
+		return domain.Notification{}, domain.ErrInvalidTransition
+	}
+}
+
+// MarkRetrying records a retryable delivery failure: processing →
+// retrying with the error preserved for API consumers.
+func (repo *NotificationRepository) MarkRetrying(ctx context.Context, id uuid.UUID, lastError string) error {
+	return repo.recordOutcome(ctx, id, domain.StatusRetrying, lastError)
+}
+
+// MarkFailed records a permanent or exhausted delivery failure.
+func (repo *NotificationRepository) MarkFailed(ctx context.Context, id uuid.UUID, lastError string) error {
+	return repo.recordOutcome(ctx, id, domain.StatusFailed, lastError)
+}
+
+func (repo *NotificationRepository) recordOutcome(ctx context.Context, id uuid.UUID, to domain.Status, lastError string) error {
+	const record = `
+		UPDATE notifications
+		SET status = $1, last_error = $2, updated_at = now()
+		WHERE id = $3 AND status = $4`
+
+	tag, err := repo.pool.Exec(ctx, record, to, lastError, id, domain.StatusProcessing)
+	if err != nil {
+		return fmt.Errorf("mark notification %s %s: %w", id, to, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrInvalidTransition
+	}
+	return nil
+}
+
 // MarkSent finalizes a successful delivery: processing → sent with the
 // provider's message ID and the send timestamp.
 func (repo *NotificationRepository) MarkSent(ctx context.Context, id uuid.UUID, providerMessageID string, sentAt time.Time) error {
