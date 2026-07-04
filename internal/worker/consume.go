@@ -14,10 +14,16 @@ import (
 )
 
 // Run consumes every per-channel work queue until the context is
-// cancelled. It owns its consumer goroutines: one per channel queue,
-// all joined before Run returns.
+// cancelled or a consumer dies. It owns its consumer goroutines: one per
+// channel queue, all joined before Run returns. A broker-closed delivery
+// channel is a fatal error — the process must exit (and be restarted)
+// rather than keep running with dead consumers.
 func (worker *Worker) Run(ctx context.Context, conn *amqp.Connection, prefetch int) error {
+	runCtx, stopAll := context.WithCancel(ctx)
+	defer stopAll()
+
 	var wg sync.WaitGroup
+	loopErrs := make(chan error, len(domain.Channels()))
 
 	for _, deliveryChannel := range domain.Channels() {
 		queueName := rabbit.WorkQueueName(deliveryChannel)
@@ -47,27 +53,38 @@ func (worker *Worker) Run(ctx context.Context, conn *amqp.Connection, prefetch i
 		go func() {
 			defer wg.Done()
 			defer amqpChannel.Close()
-			worker.consumeLoop(ctx, queueName, deliveries)
+			if err := worker.consumeLoop(runCtx, queueName, deliveries); err != nil {
+				loopErrs <- err
+				stopAll() // one dead consumer stops the siblings so Run can report
+			}
 		}()
 	}
 
 	worker.logger.Info("worker consuming", slog.Int("queues", len(domain.Channels())), slog.Int("prefetch", prefetch))
 	wg.Wait()
+	close(loopErrs)
+
+	for err := range loopErrs {
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-func (worker *Worker) consumeLoop(ctx context.Context, queueName string, deliveries <-chan amqp.Delivery) {
+// consumeLoop returns nil on graceful shutdown and an error when the
+// broker closes the delivery channel.
+func (worker *Worker) consumeLoop(ctx context.Context, queueName string, deliveries <-chan amqp.Delivery) error {
 	logger := worker.logger.With(slog.String("queue", queueName))
 
 	for {
 		select {
 		case <-ctx.Done():
 			logger.Info("consumer stopping")
-			return
+			return nil
 		case delivery, open := <-deliveries:
 			if !open {
-				logger.Warn("delivery channel closed by broker")
-				return
+				return fmt.Errorf("delivery channel for %s closed by broker", queueName)
 			}
 			worker.handleDelivery(ctx, logger, delivery)
 		}
