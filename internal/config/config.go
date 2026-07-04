@@ -23,6 +23,9 @@ const (
 	defaultDatabaseURL     = "postgres://notifier:notifier@localhost:5432/notifier?sslmode=disable"
 	defaultRabbitURL       = "amqp://notifier:notifier@localhost:5672/"
 	defaultWorkerPrefetch  = 50
+	defaultProviderTimeout = 10 * time.Second
+	// defaultMaxDeliveryAttempts = first attempt + one per retry tier.
+	defaultMaxDeliveryAttempts = 4
 )
 
 // Config holds every runtime tunable. Values come from environment
@@ -35,6 +38,11 @@ type Config struct {
 	DatabaseURL     string
 	RabbitURL       string
 	WorkerPrefetch  int
+	// ProviderURL is the external delivery endpoint (a webhook.site URL).
+	// Empty means deliveries are simulated with the logging sender.
+	ProviderURL         string
+	ProviderTimeout     time.Duration
+	MaxDeliveryAttempts int
 }
 
 // LookupFunc returns the value of an environment variable, or "" if unset.
@@ -45,13 +53,15 @@ type LookupFunc func(key string) string
 // defaults for unset keys and rejecting malformed values.
 func Load(lookup LookupFunc) (Config, error) {
 	cfg := Config{
-		Role:            RoleAll,
-		HTTPPort:        defaultHTTPPort,
-		ShutdownTimeout: defaultShutdownTimeout,
-		LogLevel:        defaultLogLevel,
-		DatabaseURL:     defaultDatabaseURL,
-		RabbitURL:       defaultRabbitURL,
-		WorkerPrefetch:  defaultWorkerPrefetch,
+		Role:                RoleAll,
+		HTTPPort:            defaultHTTPPort,
+		ShutdownTimeout:     defaultShutdownTimeout,
+		LogLevel:            defaultLogLevel,
+		DatabaseURL:         defaultDatabaseURL,
+		RabbitURL:           defaultRabbitURL,
+		WorkerPrefetch:      defaultWorkerPrefetch,
+		ProviderTimeout:     defaultProviderTimeout,
+		MaxDeliveryAttempts: defaultMaxDeliveryAttempts,
 	}
 
 	if roleValue := lookup("ROLE"); roleValue != "" {
@@ -81,6 +91,13 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 	if rabbitURL := lookup("RABBITMQ_URL"); rabbitURL != "" {
 		cfg.RabbitURL = rabbitURL
+	}
+	cfg.ProviderURL = lookup("PROVIDER_URL")
+	if err := parseDuration(lookup, "PROVIDER_TIMEOUT", &cfg.ProviderTimeout); err != nil {
+		return Config{}, err
+	}
+	if err := parseInt(lookup, "MAX_DELIVERY_ATTEMPTS", &cfg.MaxDeliveryAttempts); err != nil {
+		return Config{}, err
 	}
 
 	return cfg, nil
