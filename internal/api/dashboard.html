@@ -413,7 +413,7 @@
       <label for="send-method">Send as</label>
       <select id="send-method">
         <option value="individual" selected>individual requests</option>
-        <option value="batch">one batch request (≤1000)</option>
+        <option value="batch">one batch request (API caps at 1000)</option>
       </select>
       <div class="row">
         <button class="primary" onclick="sendBurst(1)">Send 1</button>
@@ -1073,13 +1073,11 @@ function sendCustom() {
 }
 
 // sendBatch exercises the real batch endpoint: one request carrying all
-// items, with per-index results and a shared batch_id.
+// items, with per-index results and a shared batch_id. Deliberately no
+// client-side size cap: overlong batches go to the server so its 400
+// rejection is demonstrable in the wire log.
 async function sendBatch(count) {
   const result = document.getElementById("send-result");
-  if (count > 1000) {
-    result.textContent = "batch mode is capped at 1000 (API limit)";
-    return;
-  }
   if (busy) return;
   busy = true;
   setControlsDisabled(true);
