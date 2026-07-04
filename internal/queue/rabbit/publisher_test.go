@@ -52,7 +52,7 @@ func TestRetryTiersEscalate(t *testing.T) {
 }
 
 func TestAMQPPrioritiesOrderCorrectly(t *testing.T) {
-	if !(amqpPriorityHigh > amqpPriorityNormal && amqpPriorityNormal > amqpPriorityLow) {
+	if amqpPriorityHigh <= amqpPriorityNormal || amqpPriorityNormal <= amqpPriorityLow {
 		t.Errorf("priority values do not order high > normal > low: %d, %d, %d",
 			amqpPriorityHigh, amqpPriorityNormal, amqpPriorityLow)
 	}

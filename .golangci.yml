@@ -1,0 +1,20 @@
+version: "2"
+
+linters:
+  settings:
+    errcheck:
+      # Exit-path and deferred cleanup is deliberately fire-and-forget:
+      # these run during teardown, after the outcome that matters has
+      # already been decided, and there is nothing useful to do with a
+      # close error there. Every state-bearing error is handled at the
+      # call site.
+      exclude-functions:
+        - (io.Closer).Close
+        - (*github.com/rabbitmq/amqp091-go.Channel).Close
+        - (*github.com/rabbitmq/amqp091-go.Connection).Close
+        - (*notifier/internal/queue/rabbit.Publisher).Close
+        - (*github.com/coder/websocket.Conn).Close
+        - (*github.com/coder/websocket.Conn).CloseNow
+        - (github.com/jackc/pgx/v5.Tx).Rollback
+        - (*github.com/golang-migrate/migrate/v4.Migrate).Close
+        - fmt.Fprint
