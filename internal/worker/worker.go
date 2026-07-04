@@ -62,8 +62,11 @@ func (worker *Worker) processNotification(ctx context.Context, id uuid.UUID) err
 
 	// The guarded transition is the idempotency gate: cancelled, already
 	// sent, or concurrently processing rows all fail the guard and the
-	// redelivered message is dropped without a duplicate send.
-	err = worker.repo.UpdateStatus(ctx, id, domain.StatusProcessing, domain.StatusQueued, domain.StatusRetrying)
+	// redelivered message is dropped without a duplicate send. pending is
+	// accepted because a consumed message proves publication even when
+	// the producer's queued mark has not landed yet.
+	err = worker.repo.UpdateStatus(ctx, id, domain.StatusProcessing,
+		domain.StatusQueued, domain.StatusRetrying, domain.StatusPending)
 	if err != nil {
 		if errors.Is(err, domain.ErrInvalidTransition) || errors.Is(err, domain.ErrNotFound) {
 			logger.Info("skipping delivery", slog.String("status", string(notification.Status)))

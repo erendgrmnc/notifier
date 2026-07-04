@@ -32,6 +32,7 @@ func TestCanTransition(t *testing.T) {
 		allowed bool
 	}{
 		{name: "pending to queued", from: StatusPending, to: StatusQueued, allowed: true},
+		{name: "pending to processing for publish race", from: StatusPending, to: StatusProcessing, allowed: true},
 		{name: "scheduled to queued", from: StatusScheduled, to: StatusQueued, allowed: true},
 		{name: "queued to processing", from: StatusQueued, to: StatusProcessing, allowed: true},
 		{name: "processing to sent", from: StatusProcessing, to: StatusSent, allowed: true},

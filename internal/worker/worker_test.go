@@ -129,6 +129,24 @@ func TestProcessDeliversQueuedNotification(t *testing.T) {
 	}
 }
 
+func TestProcessDeliversPendingNotificationFromPublishRace(t *testing.T) {
+	repo := newFakeRepository()
+	sender := &fakeSender{}
+	queueWorker := newTestWorker(repo, sender)
+	notification := seedNotification(repo, domain.StatusPending)
+
+	if err := queueWorker.processNotification(context.Background(), notification.ID); err != nil {
+		t.Fatalf("processNotification: %v", err)
+	}
+
+	if len(sender.sent) != 1 {
+		t.Fatalf("sender called %d times, want 1 (pending row with a live message must deliver)", len(sender.sent))
+	}
+	if repo.stored[notification.ID].Status != domain.StatusSent {
+		t.Errorf("status = %s, want sent", repo.stored[notification.ID].Status)
+	}
+}
+
 func TestProcessDropsCancelledNotification(t *testing.T) {
 	repo := newFakeRepository()
 	sender := &fakeSender{}

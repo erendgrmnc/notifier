@@ -64,8 +64,12 @@ const (
 
 // transitions is the single source of truth for the status state machine.
 // The SQL layer enforces the same rules via guarded UPDATEs.
+//
+// pending → processing exists because messages are published after the
+// insert commits but before the queued mark lands: a fast consumer can
+// legitimately receive a message whose row still reads pending.
 var transitions = map[Status][]Status{
-	StatusPending:    {StatusQueued, StatusCancelled},
+	StatusPending:    {StatusQueued, StatusProcessing, StatusCancelled},
 	StatusScheduled:  {StatusQueued, StatusCancelled},
 	StatusQueued:     {StatusProcessing, StatusCancelled},
 	StatusProcessing: {StatusSent, StatusRetrying, StatusFailed},
