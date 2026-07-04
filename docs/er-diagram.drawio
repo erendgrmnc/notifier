@@ -1,0 +1,111 @@
+<mxfile host="app.diagrams.net" modified="2026-07-04T00:00:00.000Z" agent="drawio" version="24.0.0">
+  <diagram id="notification-er" name="Entity Relations">
+    <mxGraphModel dx="1200" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1000" pageHeight="620" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="Notification System — Entity/Relation Diagram" style="text;html=1;fontSize=18;fontStyle=1;align=left;" vertex="1" parent="1">
+          <mxGeometry x="40" y="10" width="500" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- notifications entity -->
+        <mxCell id="notifications" value="notifications" style="swimlane;html=1;fontStyle=1;startSize=30;horizontal=1;fillColor=#dae8fc;strokeColor=#6c8ebf;swimlaneFillColor=#ffffff;" vertex="1" parent="1">
+          <mxGeometry x="80" y="80" width="330" height="390" as="geometry" />
+        </mxCell>
+        <mxCell id="n01" value="id : UUID — PK" style="text;html=1;align=left;spacingLeft=8;fontStyle=4;" vertex="1" parent="notifications">
+          <mxGeometry x="0" y="30" width="330" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="n02" value="batch_id : UUID — ∅" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="notifications">
+          <mxGeometry x="0" y="54" width="330" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="n03" value="recipient : TEXT" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="notifications">
+          <mxGeometry x="0" y="78" width="330" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="n04" value="channel : channel" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="notifications">
+          <mxGeometry x="0" y="102" width="330" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="n05" value="content : TEXT" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="notifications">
+          <mxGeometry x="0" y="126" width="330" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="n06" value="priority : priority — default normal" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="notifications">
+          <mxGeometry x="0" y="150" width="330" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="n07" value="status : notification_status — default pending" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="notifications">
+          <mxGeometry x="0" y="174" width="330" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="n08" value="idempotency_key : TEXT — ∅, UQ (partial)" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="notifications">
+          <mxGeometry x="0" y="198" width="330" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="n09" value="scheduled_at : TIMESTAMPTZ — ∅" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="notifications">
+          <mxGeometry x="0" y="222" width="330" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="n10" value="attempts : INT — default 0" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="notifications">
+          <mxGeometry x="0" y="246" width="330" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="n11" value="last_error : TEXT — ∅" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="notifications">
+          <mxGeometry x="0" y="270" width="330" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="n12" value="provider_message_id : TEXT — ∅" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="notifications">
+          <mxGeometry x="0" y="294" width="330" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="n13" value="created_at : TIMESTAMPTZ — default now()" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="notifications">
+          <mxGeometry x="0" y="318" width="330" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="n14" value="updated_at : TIMESTAMPTZ — default now()" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="notifications">
+          <mxGeometry x="0" y="342" width="330" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="n15" value="sent_at : TIMESTAMPTZ — ∅" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="notifications">
+          <mxGeometry x="0" y="366" width="330" height="24" as="geometry" />
+        </mxCell>
+
+        <!-- templates entity -->
+        <mxCell id="templates" value="templates" style="swimlane;html=1;fontStyle=1;startSize=30;horizontal=1;fillColor=#d5e8d4;strokeColor=#82b366;swimlaneFillColor=#ffffff;" vertex="1" parent="1">
+          <mxGeometry x="620" y="80" width="300" height="174" as="geometry" />
+        </mxCell>
+        <mxCell id="t01" value="id : UUID — PK" style="text;html=1;align=left;spacingLeft=8;fontStyle=4;" vertex="1" parent="templates">
+          <mxGeometry x="0" y="30" width="300" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="t02" value="name : TEXT — UQ" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="templates">
+          <mxGeometry x="0" y="54" width="300" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="t03" value="channel : channel" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="templates">
+          <mxGeometry x="0" y="78" width="300" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="t04" value="body : TEXT" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="templates">
+          <mxGeometry x="0" y="102" width="300" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="t05" value="created_at : TIMESTAMPTZ — default now()" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="templates">
+          <mxGeometry x="0" y="126" width="300" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="t06" value="updated_at : TIMESTAMPTZ — default now()" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="templates">
+          <mxGeometry x="0" y="150" width="300" height="24" as="geometry" />
+        </mxCell>
+
+        <!-- enums -->
+        <mxCell id="enums" value="ENUM types" style="swimlane;html=1;fontStyle=1;startSize=30;horizontal=1;fillColor=#fff2cc;strokeColor=#d6b656;swimlaneFillColor=#ffffff;" vertex="1" parent="1">
+          <mxGeometry x="620" y="330" width="300" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="en1" value="channel: sms | email | push" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="enums">
+          <mxGeometry x="0" y="30" width="300" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="en2" value="priority: high | normal | low" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="enums">
+          <mxGeometry x="0" y="54" width="300" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="en3" value="notification_status: pending | scheduled | queued |&#10;processing | retrying | sent | failed | cancelled" style="text;html=1;align=left;spacingLeft=8;" vertex="1" parent="enums">
+          <mxGeometry x="0" y="78" width="300" height="48" as="geometry" />
+        </mxCell>
+
+        <!-- logical relation: template renders notification content at enqueue -->
+        <mxCell id="rel1" value="renders content at enqueue&#10;(logical 1 : N — no FK, content stored final)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.35;entryDx=0;entryDy=0;startArrow=none;endArrow=open;" edge="1" parent="1" source="templates" target="notifications">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- legend -->
+        <mxCell id="legend" value="PK = primary key · UQ = unique index · ∅ = nullable · batch_id groups rows created by one batch request (no parent table)" style="text;html=1;align=left;fontSize=11;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="80" y="500" width="840" height="20" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
