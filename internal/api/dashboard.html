@@ -144,14 +144,13 @@
   .empty { color: var(--dim); font-style: italic; font-size: 12px; padding: 6px 0; }
 
   /* ---- wire log ---- */
-  .wire-panel { margin-top: 14px; }
   .wire-panel > h2 button { margin-left: auto; font: 600 10px var(--mono); letter-spacing: .08em;
     background: transparent; color: var(--dim); border: 1px solid var(--edge); border-radius: 4px;
     padding: 2px 9px; cursor: pointer; text-transform: uppercase; }
   .wire-panel > h2 button:hover { color: var(--paper); border-color: var(--dim); }
   .wire-panel > h2::after { content: none; }
   .wire-panel > h2 .rule { flex: 1; height: 1px; background: var(--edge); }
-  #wire { font: 11.5px var(--mono); max-height: 230px; overflow-y: auto; }
+  #wire { font: 11.5px var(--mono); max-height: 180px; overflow-y: auto; }
   .wire-line { display: flex; gap: 10px; align-items: baseline; padding: 2.5px 0;
     border-bottom: 1px solid rgba(38,50,82,.35); }
   .wire-line .t { color: var(--dim); font-size: 10px; flex: 0 0 62px; }
@@ -191,6 +190,10 @@
 
   <!-- center: live system -->
   <div class="stack">
+    <div class="panel wire-panel">
+      <h2>Wire — API calls <span class="rule"></span><button onclick="clearWire()">Clear</button></h2>
+      <div id="wire"><p class="empty">actions and scenario steps appear here as requests; background polling is not shown</p></div>
+    </div>
     <div class="panel">
       <h2>Queues</h2>
       <div id="queues"><p class="empty">reading…</p></div>
@@ -238,11 +241,6 @@
       <div id="clients"><p class="empty">nothing delivered yet</p></div>
     </div>
   </div>
-</div>
-
-<div class="panel wire-panel">
-  <h2>Wire — API calls <span class="rule"></span><button onclick="clearWire()">Clear</button></h2>
-  <div id="wire"><p class="empty">actions and scenario steps appear here as requests; background polling is not shown</p></div>
 </div>
 
 <script>
