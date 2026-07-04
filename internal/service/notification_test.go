@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -38,6 +40,34 @@ func (repo *fakeRepository) GetByID(_ context.Context, id uuid.UUID) (domain.Not
 	return notification, nil
 }
 
+func (repo *fakeRepository) UpdateStatus(_ context.Context, id uuid.UUID, to domain.Status, allowedFrom ...domain.Status) error {
+	notification, ok := repo.stored[id]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	for _, from := range allowedFrom {
+		if notification.Status == from {
+			notification.Status = to
+			repo.stored[id] = notification
+			return nil
+		}
+	}
+	return domain.ErrInvalidTransition
+}
+
+type fakePublisher struct {
+	published []domain.Notification
+	failure   error
+}
+
+func (publisher *fakePublisher) PublishCreated(_ context.Context, notification domain.Notification) error {
+	if publisher.failure != nil {
+		return publisher.failure
+	}
+	publisher.published = append(publisher.published, notification)
+	return nil
+}
+
 type fixedClock struct{ now time.Time }
 
 func (clock fixedClock) Now() time.Time { return clock.now }
@@ -45,12 +75,18 @@ func (clock fixedClock) Now() time.Time { return clock.now }
 var testNow = time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
 
 func newTestService(repo *fakeRepository) *NotificationService {
-	return NewNotificationService(repo, fixedClock{now: testNow})
+	return newTestServiceWithPublisher(repo, &fakePublisher{})
 }
 
-func TestCreatePersistsPendingNotification(t *testing.T) {
+func newTestServiceWithPublisher(repo *fakeRepository, publisher *fakePublisher) *NotificationService {
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	return NewNotificationService(repo, publisher, fixedClock{now: testNow}, logger)
+}
+
+func TestCreatePublishesAndMarksQueued(t *testing.T) {
 	repo := newFakeRepository()
-	svc := newTestService(repo)
+	publisher := &fakePublisher{}
+	svc := newTestServiceWithPublisher(repo, publisher)
 
 	created, err := svc.Create(context.Background(), CreateInput{
 		Recipient: "+905551234567",
@@ -64,8 +100,8 @@ func TestCreatePersistsPendingNotification(t *testing.T) {
 	if created.ID == uuid.Nil {
 		t.Error("ID not assigned")
 	}
-	if created.Status != domain.StatusPending {
-		t.Errorf("Status = %s, want %s", created.Status, domain.StatusPending)
+	if created.Status != domain.StatusQueued {
+		t.Errorf("Status = %s, want %s after publish", created.Status, domain.StatusQueued)
 	}
 	if created.Priority != domain.PriorityNormal {
 		t.Errorf("Priority = %s, want default %s", created.Priority, domain.PriorityNormal)
@@ -76,11 +112,40 @@ func TestCreatePersistsPendingNotification(t *testing.T) {
 	if len(repo.created) != 1 {
 		t.Fatalf("persisted %d notifications, want 1", len(repo.created))
 	}
+	if len(publisher.published) != 1 {
+		t.Fatalf("published %d messages, want 1", len(publisher.published))
+	}
+	if stored := repo.stored[created.ID]; stored.Status != domain.StatusQueued {
+		t.Errorf("stored status = %s, want queued", stored.Status)
+	}
+}
+
+func TestCreatePublishFailureLeavesPending(t *testing.T) {
+	repo := newFakeRepository()
+	publisher := &fakePublisher{failure: errors.New("broker down")}
+	svc := newTestServiceWithPublisher(repo, publisher)
+
+	created, err := svc.Create(context.Background(), CreateInput{
+		Recipient: "+905551234567",
+		Channel:   domain.ChannelSMS,
+		Content:   "hello",
+	})
+	if err != nil {
+		t.Fatalf("Create should tolerate publish failure, got: %v", err)
+	}
+
+	if created.Status != domain.StatusPending {
+		t.Errorf("Status = %s, want pending when publish fails", created.Status)
+	}
+	if stored := repo.stored[created.ID]; stored.Status != domain.StatusPending {
+		t.Errorf("stored status = %s, want pending for sweeper recovery", stored.Status)
+	}
 }
 
 func TestCreateSchedulesFutureNotification(t *testing.T) {
 	repo := newFakeRepository()
-	svc := newTestService(repo)
+	publisher := &fakePublisher{}
+	svc := newTestServiceWithPublisher(repo, publisher)
 	future := testNow.Add(time.Hour)
 
 	created, err := svc.Create(context.Background(), CreateInput{
@@ -95,6 +160,9 @@ func TestCreateSchedulesFutureNotification(t *testing.T) {
 
 	if created.Status != domain.StatusScheduled {
 		t.Errorf("Status = %s, want %s", created.Status, domain.StatusScheduled)
+	}
+	if len(publisher.published) != 0 {
+		t.Errorf("scheduled notification was published immediately; the scheduler owns future deliveries")
 	}
 }
 

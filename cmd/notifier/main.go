@@ -16,6 +16,7 @@ import (
 	"notifier/internal/api"
 	"notifier/internal/config"
 	"notifier/internal/observability"
+	"notifier/internal/queue/rabbit"
 	"notifier/internal/service"
 	"notifier/internal/storage/postgres"
 )
@@ -81,8 +82,24 @@ func runAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 	defer pool.Close()
 
+	rabbitConn, err := rabbit.Connect(cfg.RabbitURL)
+	if err != nil {
+		return fmt.Errorf("connect rabbitmq: %w", err)
+	}
+	defer rabbitConn.Close()
+
+	if err := rabbit.DeclareTopology(rabbitConn); err != nil {
+		return fmt.Errorf("declare topology: %w", err)
+	}
+
+	publisher, err := rabbit.NewPublisher(rabbitConn)
+	if err != nil {
+		return fmt.Errorf("create publisher: %w", err)
+	}
+	defer publisher.Close()
+
 	repository := postgres.NewNotificationRepository(pool)
-	notifications := service.NewNotificationService(repository, realClock{})
+	notifications := service.NewNotificationService(repository, publisher, realClock{}, logger)
 
 	router := api.NewRouter(api.RouterConfig{
 		Logger:         logger,

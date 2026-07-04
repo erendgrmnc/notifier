@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -67,6 +68,52 @@ func (repo *NotificationRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		return domain.Notification{}, fmt.Errorf("select notification %s: %w", id, err)
 	}
 	return notification, nil
+}
+
+// UpdateStatus transitions a notification's status only if its current
+// status is in the allowed set — the SQL-side enforcement of the domain
+// state machine. Returns domain.ErrInvalidTransition when the guard
+// rejects the write, domain.ErrNotFound when the row does not exist.
+func (repo *NotificationRepository) UpdateStatus(ctx context.Context, id uuid.UUID, to domain.Status, allowedFrom ...domain.Status) error {
+	const updateStatus = `
+		UPDATE notifications
+		SET status = $1, updated_at = now()
+		WHERE id = $2 AND status::text = ANY($3)`
+
+	fromValues := make([]string, len(allowedFrom))
+	for i, status := range allowedFrom {
+		fromValues[i] = string(status)
+	}
+
+	tag, err := repo.pool.Exec(ctx, updateStatus, to, id, fromValues)
+	if err != nil {
+		return fmt.Errorf("update notification %s status: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		if _, err := repo.GetByID(ctx, id); errors.Is(err, domain.ErrNotFound) {
+			return domain.ErrNotFound
+		}
+		return domain.ErrInvalidTransition
+	}
+	return nil
+}
+
+// MarkSent finalizes a successful delivery: processing → sent with the
+// provider's message ID and the send timestamp.
+func (repo *NotificationRepository) MarkSent(ctx context.Context, id uuid.UUID, providerMessageID string, sentAt time.Time) error {
+	const markSent = `
+		UPDATE notifications
+		SET status = $1, provider_message_id = $2, sent_at = $3, updated_at = now()
+		WHERE id = $4 AND status = $5`
+
+	tag, err := repo.pool.Exec(ctx, markSent, domain.StatusSent, providerMessageID, sentAt, id, domain.StatusProcessing)
+	if err != nil {
+		return fmt.Errorf("mark notification %s sent: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrInvalidTransition
+	}
+	return nil
 }
 
 func scanNotification(row pgx.Row) (domain.Notification, error) {

@@ -5,17 +5,25 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 
 	"notifier/internal/domain"
+	"notifier/internal/observability"
 )
 
 // Repository is what this service needs from persistence.
 type Repository interface {
 	Create(ctx context.Context, notification domain.Notification) error
 	GetByID(ctx context.Context, id uuid.UUID) (domain.Notification, error)
+	UpdateStatus(ctx context.Context, id uuid.UUID, to domain.Status, allowedFrom ...domain.Status) error
+}
+
+// Publisher hands a created notification to the queue for delivery.
+type Publisher interface {
+	PublishCreated(ctx context.Context, notification domain.Notification) error
 }
 
 // Clock supplies time so scheduling logic is testable.
@@ -25,12 +33,14 @@ type Clock interface {
 
 // NotificationService implements the create/query use cases.
 type NotificationService struct {
-	repo  Repository
-	clock Clock
+	repo      Repository
+	publisher Publisher
+	clock     Clock
+	logger    *slog.Logger
 }
 
-func NewNotificationService(repo Repository, clock Clock) *NotificationService {
-	return &NotificationService{repo: repo, clock: clock}
+func NewNotificationService(repo Repository, publisher Publisher, clock Clock, logger *slog.Logger) *NotificationService {
+	return &NotificationService{repo: repo, publisher: publisher, clock: clock, logger: logger}
 }
 
 // CreateInput carries the validated-shape request for one notification.
@@ -75,7 +85,40 @@ func (svc *NotificationService) Create(ctx context.Context, input CreateInput) (
 	if err := svc.repo.Create(ctx, notification); err != nil {
 		return domain.Notification{}, fmt.Errorf("create notification: %w", err)
 	}
+
+	// Scheduled notifications wait for the scheduler; immediate ones go
+	// to the queue now. A failed publish is deliberately not an error:
+	// the row stays pending and the sweeper republishes it later.
+	if notification.Status == domain.StatusPending {
+		notification = svc.publishForDelivery(ctx, notification)
+	}
 	return notification, nil
+}
+
+// publishForDelivery hands the notification to the queue and records the
+// pending → queued transition. On any failure the stored status is left
+// as-is for recovery; the returned copy reflects what actually happened.
+func (svc *NotificationService) publishForDelivery(ctx context.Context, notification domain.Notification) domain.Notification {
+	logger := observability.LoggerFrom(ctx, svc.logger)
+
+	if err := svc.publisher.PublishCreated(ctx, notification); err != nil {
+		logger.Warn("publish failed; notification stays pending for sweeper",
+			slog.String("notification_id", notification.ID.String()),
+			slog.Any("error", err),
+		)
+		return notification
+	}
+
+	if err := svc.repo.UpdateStatus(ctx, notification.ID, domain.StatusQueued, domain.StatusPending); err != nil {
+		logger.Warn("mark queued failed after publish",
+			slog.String("notification_id", notification.ID.String()),
+			slog.Any("error", err),
+		)
+		return notification
+	}
+
+	notification.Status = domain.StatusQueued
+	return notification
 }
 
 // Get returns one notification by ID.
