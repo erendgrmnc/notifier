@@ -14,9 +14,10 @@ import (
 )
 
 type fakeRepository struct {
-	created []domain.Notification
-	stored  map[uuid.UUID]domain.Notification
-	failure error
+	created       []domain.Notification
+	stored        map[uuid.UUID]domain.Notification
+	failure       error
+	lastListQuery domain.ListQuery
 }
 
 func newFakeRepository() *fakeRepository {
@@ -26,6 +27,13 @@ func newFakeRepository() *fakeRepository {
 func (repo *fakeRepository) Create(_ context.Context, notification domain.Notification) error {
 	if repo.failure != nil {
 		return repo.failure
+	}
+	if notification.IdempotencyKey != nil {
+		for _, existing := range repo.stored {
+			if existing.IdempotencyKey != nil && *existing.IdempotencyKey == *notification.IdempotencyKey {
+				return domain.ErrDuplicateIdempotencyKey
+			}
+		}
 	}
 	repo.created = append(repo.created, notification)
 	repo.stored[notification.ID] = notification
@@ -40,15 +48,28 @@ func (repo *fakeRepository) GetByID(_ context.Context, id uuid.UUID) (domain.Not
 	return notification, nil
 }
 
-func (repo *fakeRepository) ListRecent(_ context.Context, limit int) ([]domain.Notification, error) {
+func (repo *fakeRepository) List(_ context.Context, query domain.ListQuery) ([]domain.Notification, error) {
+	repo.lastListQuery = query
 	var notifications []domain.Notification
 	for _, notification := range repo.stored {
+		if query.Status != "" && notification.Status != query.Status {
+			continue
+		}
 		notifications = append(notifications, notification)
-		if len(notifications) == limit {
+		if len(notifications) == query.Limit {
 			break
 		}
 	}
 	return notifications, nil
+}
+
+func (repo *fakeRepository) GetByIdempotencyKey(_ context.Context, key string) (domain.Notification, error) {
+	for _, notification := range repo.stored {
+		if notification.IdempotencyKey != nil && *notification.IdempotencyKey == key {
+			return notification, nil
+		}
+	}
+	return domain.Notification{}, domain.ErrNotFound
 }
 
 func (repo *fakeRepository) UpdateStatus(_ context.Context, id uuid.UUID, to domain.Status, allowedFrom ...domain.Status) error {
@@ -99,7 +120,7 @@ func TestCreatePublishesAndMarksQueued(t *testing.T) {
 	publisher := &fakePublisher{}
 	svc := newTestServiceWithPublisher(repo, publisher)
 
-	created, err := svc.Create(context.Background(), CreateInput{
+	result, err := svc.Create(context.Background(), CreateInput{
 		Recipient: "+905551234567",
 		Channel:   domain.ChannelSMS,
 		Content:   "hello",
@@ -107,6 +128,7 @@ func TestCreatePublishesAndMarksQueued(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
+	created := result.Notification
 
 	if created.ID == uuid.Nil {
 		t.Error("ID not assigned")
@@ -136,7 +158,7 @@ func TestCreatePublishFailureLeavesPending(t *testing.T) {
 	publisher := &fakePublisher{failure: errors.New("broker down")}
 	svc := newTestServiceWithPublisher(repo, publisher)
 
-	created, err := svc.Create(context.Background(), CreateInput{
+	result, err := svc.Create(context.Background(), CreateInput{
 		Recipient: "+905551234567",
 		Channel:   domain.ChannelSMS,
 		Content:   "hello",
@@ -144,6 +166,7 @@ func TestCreatePublishFailureLeavesPending(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create should tolerate publish failure, got: %v", err)
 	}
+	created := result.Notification
 
 	if created.Status != domain.StatusPending {
 		t.Errorf("Status = %s, want pending when publish fails", created.Status)
@@ -159,7 +182,7 @@ func TestCreateSchedulesFutureNotification(t *testing.T) {
 	svc := newTestServiceWithPublisher(repo, publisher)
 	future := testNow.Add(time.Hour)
 
-	created, err := svc.Create(context.Background(), CreateInput{
+	result, err := svc.Create(context.Background(), CreateInput{
 		Recipient:   "+905551234567",
 		Channel:     domain.ChannelSMS,
 		Content:     "hello",
@@ -168,6 +191,7 @@ func TestCreateSchedulesFutureNotification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
+	created := result.Notification
 
 	if created.Status != domain.StatusScheduled {
 		t.Errorf("Status = %s, want %s", created.Status, domain.StatusScheduled)
@@ -215,7 +239,7 @@ func TestGetReturnsStoredNotification(t *testing.T) {
 	repo := newFakeRepository()
 	svc := newTestService(repo)
 
-	created, err := svc.Create(context.Background(), CreateInput{
+	result, err := svc.Create(context.Background(), CreateInput{
 		Recipient: "+905551234567",
 		Channel:   domain.ChannelSMS,
 		Content:   "hello",
@@ -223,6 +247,7 @@ func TestGetReturnsStoredNotification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
+	created := result.Notification
 
 	fetched, err := svc.Get(context.Background(), created.ID)
 	if err != nil {
@@ -239,5 +264,105 @@ func TestGetUnknownIDReturnsNotFound(t *testing.T) {
 	_, err := svc.Get(context.Background(), uuid.New())
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("Get error = %v, want domain.ErrNotFound", err)
+	}
+}
+
+func TestCreateReplaysDuplicateIdempotencyKey(t *testing.T) {
+	repo := newFakeRepository()
+	publisher := &fakePublisher{}
+	svc := newTestServiceWithPublisher(repo, publisher)
+	key := "client-key-1"
+
+	first, err := svc.Create(context.Background(), CreateInput{
+		Recipient: "+905551234567", Channel: domain.ChannelSMS, Content: "hello",
+		IdempotencyKey: &key,
+	})
+	if err != nil {
+		t.Fatalf("first Create: %v", err)
+	}
+
+	replay, err := svc.Create(context.Background(), CreateInput{
+		Recipient: "+905551234567", Channel: domain.ChannelSMS, Content: "hello",
+		IdempotencyKey: &key,
+	})
+	if err != nil {
+		t.Fatalf("replayed Create: %v", err)
+	}
+
+	if !replay.Replayed {
+		t.Error("Replayed = false on duplicate key")
+	}
+	if replay.Notification.ID != first.Notification.ID {
+		t.Errorf("replay returned ID %s, want original %s", replay.Notification.ID, first.Notification.ID)
+	}
+	if len(repo.created) != 1 {
+		t.Errorf("persisted %d notifications, want 1", len(repo.created))
+	}
+	if len(publisher.published) != 1 {
+		t.Errorf("published %d messages, want 1 (replay must not republish)", len(publisher.published))
+	}
+}
+
+func TestCancelPendingNotification(t *testing.T) {
+	repo := newFakeRepository()
+	publisher := &fakePublisher{failure: errors.New("broker down")} // keeps status pending
+	svc := newTestServiceWithPublisher(repo, publisher)
+
+	result, err := svc.Create(context.Background(), CreateInput{
+		Recipient: "+905551234567", Channel: domain.ChannelSMS, Content: "hello",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	cancelled, err := svc.Cancel(context.Background(), result.Notification.ID)
+	if err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if cancelled.Status != domain.StatusCancelled {
+		t.Errorf("status = %s, want cancelled", cancelled.Status)
+	}
+}
+
+func TestCancelRejectsTerminalStatus(t *testing.T) {
+	repo := newFakeRepository()
+	svc := newTestService(repo)
+	notification := domain.Notification{ID: uuid.New(), Status: domain.StatusSent}
+	repo.stored[notification.ID] = notification
+
+	if _, err := svc.Cancel(context.Background(), notification.ID); !errors.Is(err, domain.ErrInvalidTransition) {
+		t.Errorf("Cancel(sent) error = %v, want ErrInvalidTransition", err)
+	}
+	if _, err := svc.Cancel(context.Background(), uuid.New()); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("Cancel(unknown) error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestListClampsLimit(t *testing.T) {
+	repo := newFakeRepository()
+	svc := newTestService(repo)
+
+	if _, err := svc.List(context.Background(), domain.ListQuery{Limit: 100000}); err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if repo.lastListQuery.Limit != MaxListLimit {
+		t.Errorf("limit = %d, want clamped to %d", repo.lastListQuery.Limit, MaxListLimit)
+	}
+
+	if _, err := svc.List(context.Background(), domain.ListQuery{}); err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if repo.lastListQuery.Limit != DefaultListLimit {
+		t.Errorf("limit = %d, want default %d", repo.lastListQuery.Limit, DefaultListLimit)
+	}
+}
+
+func TestListRejectsInvalidFilter(t *testing.T) {
+	svc := newTestService(newFakeRepository())
+
+	_, err := svc.List(context.Background(), domain.ListQuery{Status: domain.Status("bogus")})
+	var validationErrs domain.ValidationErrors
+	if !errors.As(err, &validationErrs) {
+		t.Errorf("List error = %v, want ValidationErrors", err)
 	}
 }

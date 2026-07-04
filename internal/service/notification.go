@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -18,15 +19,17 @@ import (
 type Repository interface {
 	Create(ctx context.Context, notification domain.Notification) error
 	GetByID(ctx context.Context, id uuid.UUID) (domain.Notification, error)
+	GetByIdempotencyKey(ctx context.Context, key string) (domain.Notification, error)
 	UpdateStatus(ctx context.Context, id uuid.UUID, to domain.Status, allowedFrom ...domain.Status) error
-	ListRecent(ctx context.Context, limit int) ([]domain.Notification, error)
+	List(ctx context.Context, query domain.ListQuery) ([]domain.Notification, error)
 }
 
 // List limits: the API clamps rather than rejects, so dashboards can
-// always ask for "the recent ones" without negotiating.
+// always ask for "the recent ones" without negotiating. Exported so the
+// transport layer can compute pagination cursors consistently.
 const (
-	defaultListLimit = 50
-	maxListLimit     = 100
+	DefaultListLimit = 50
+	MaxListLimit     = 100
 )
 
 // Publisher hands a created notification to the queue for delivery.
@@ -61,10 +64,18 @@ type CreateInput struct {
 	IdempotencyKey *string
 }
 
+// CreateResult is a created (or replayed) notification. Replayed means
+// the idempotency key matched an existing notification, which is
+// returned unchanged instead of creating a duplicate.
+type CreateResult struct {
+	Notification domain.Notification
+	Replayed     bool
+}
+
 // Create validates the input, assigns identity and lifecycle fields,
 // and persists the notification. Future deliveries start as scheduled;
 // immediate ones as pending until published to the queue.
-func (svc *NotificationService) Create(ctx context.Context, input CreateInput) (domain.Notification, error) {
+func (svc *NotificationService) Create(ctx context.Context, input CreateInput) (CreateResult, error) {
 	now := svc.clock.Now()
 
 	notification := domain.Notification{
@@ -87,11 +98,19 @@ func (svc *NotificationService) Create(ctx context.Context, input CreateInput) (
 	}
 
 	if err := domain.ValidateNew(notification, now); err != nil {
-		return domain.Notification{}, err
+		return CreateResult{}, err
 	}
 
-	if err := svc.repo.Create(ctx, notification); err != nil {
-		return domain.Notification{}, fmt.Errorf("create notification: %w", err)
+	err := svc.repo.Create(ctx, notification)
+	if errors.Is(err, domain.ErrDuplicateIdempotencyKey) && input.IdempotencyKey != nil {
+		existing, lookupErr := svc.repo.GetByIdempotencyKey(ctx, *input.IdempotencyKey)
+		if lookupErr != nil {
+			return CreateResult{}, fmt.Errorf("replay idempotent create: %w", lookupErr)
+		}
+		return CreateResult{Notification: existing, Replayed: true}, nil
+	}
+	if err != nil {
+		return CreateResult{}, fmt.Errorf("create notification: %w", err)
 	}
 
 	// Scheduled notifications wait for the scheduler; immediate ones go
@@ -100,7 +119,26 @@ func (svc *NotificationService) Create(ctx context.Context, input CreateInput) (
 	if notification.Status == domain.StatusPending {
 		notification = svc.publishForDelivery(ctx, notification)
 	}
-	return notification, nil
+	return CreateResult{Notification: notification}, nil
+}
+
+// Cancel stops a not-yet-processing notification. The guarded update
+// enforces cancellability; already-published messages are dropped by the
+// worker's claim guard when they surface.
+func (svc *NotificationService) Cancel(ctx context.Context, id uuid.UUID) (domain.Notification, error) {
+	err := svc.repo.UpdateStatus(ctx, id, domain.StatusCancelled, domain.CancellableStatuses()...)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrInvalidTransition) {
+			return domain.Notification{}, err
+		}
+		return domain.Notification{}, fmt.Errorf("cancel notification: %w", err)
+	}
+
+	cancelled, err := svc.repo.GetByID(ctx, id)
+	if err != nil {
+		return domain.Notification{}, fmt.Errorf("load cancelled notification: %w", err)
+	}
+	return cancelled, nil
 }
 
 // publishForDelivery hands the notification to the queue and records the
@@ -138,19 +176,23 @@ func (svc *NotificationService) Get(ctx context.Context, id uuid.UUID) (domain.N
 	return notification, nil
 }
 
-// ListRecent returns the newest notifications, clamping the limit to
-// [1, maxListLimit] with a default when unspecified (limit <= 0).
-func (svc *NotificationService) ListRecent(ctx context.Context, limit int) ([]domain.Notification, error) {
-	if limit <= 0 {
-		limit = defaultListLimit
+// List returns filtered notifications, newest first, clamping the limit
+// to [1, MaxListLimit] with a default when unspecified (limit <= 0).
+func (svc *NotificationService) List(ctx context.Context, query domain.ListQuery) ([]domain.Notification, error) {
+	if query.Limit <= 0 {
+		query.Limit = DefaultListLimit
 	}
-	if limit > maxListLimit {
-		limit = maxListLimit
+	if query.Limit > MaxListLimit {
+		query.Limit = MaxListLimit
 	}
 
-	notifications, err := svc.repo.ListRecent(ctx, limit)
+	if err := query.Validate(); err != nil {
+		return nil, err
+	}
+
+	notifications, err := svc.repo.List(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("list recent notifications: %w", err)
+		return nil, fmt.Errorf("list notifications: %w", err)
 	}
 	return notifications, nil
 }

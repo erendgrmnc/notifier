@@ -4,14 +4,28 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"notifier/internal/domain"
 )
+
+// uniqueViolationCode is Postgres SQLSTATE 23505.
+const uniqueViolationCode = "23505"
+
+// isIdempotencyKeyViolation reports whether err is the unique violation
+// on the idempotency-key partial index.
+func isIdempotencyKeyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) &&
+		pgErr.Code == uniqueViolationCode &&
+		pgErr.ConstraintName == "ux_notifications_idem"
+}
 
 // NotificationRepository persists notifications. It speaks SQL only;
 // callers receive domain types and domain errors.
@@ -50,9 +64,28 @@ func (repo *NotificationRepository) Create(ctx context.Context, notification dom
 		notification.UpdatedAt,
 	)
 	if err != nil {
+		if isIdempotencyKeyViolation(err) {
+			return domain.ErrDuplicateIdempotencyKey
+		}
 		return fmt.Errorf("insert notification: %w", err)
 	}
 	return nil
+}
+
+// GetByIdempotencyKey loads the notification a duplicate create collided
+// with, so the original can be replayed to the client.
+func (repo *NotificationRepository) GetByIdempotencyKey(ctx context.Context, key string) (domain.Notification, error) {
+	query := `SELECT ` + notificationColumns + ` FROM notifications WHERE idempotency_key = $1`
+
+	row := repo.pool.QueryRow(ctx, query, key)
+	notification, err := scanNotification(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.Notification{}, domain.ErrNotFound
+		}
+		return domain.Notification{}, fmt.Errorf("select notification by idempotency key: %w", err)
+	}
+	return notification, nil
 }
 
 // GetByID loads one notification, or domain.ErrNotFound.
@@ -68,6 +101,73 @@ func (repo *NotificationRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		return domain.Notification{}, fmt.Errorf("select notification %s: %w", id, err)
 	}
 	return notification, nil
+}
+
+// CreateBatch inserts notifications in one transaction via COPY. All or
+// nothing: a mid-batch failure (e.g. an idempotency-key race) rolls the
+// whole insert back and surfaces as an error.
+func (repo *NotificationRepository) CreateBatch(ctx context.Context, notifications []domain.Notification) error {
+	if len(notifications) == 0 {
+		return nil
+	}
+
+	tx, err := repo.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin batch insert: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	_, err = tx.CopyFrom(ctx,
+		pgx.Identifier{"notifications"},
+		[]string{"id", "batch_id", "recipient", "channel", "content", "priority",
+			"status", "idempotency_key", "scheduled_at", "created_at", "updated_at"},
+		pgx.CopyFromSlice(len(notifications), func(i int) ([]any, error) {
+			n := notifications[i]
+			return []any{n.ID, n.BatchID, n.Recipient, n.Channel, n.Content, n.Priority,
+				n.Status, n.IdempotencyKey, n.ScheduledAt, n.CreatedAt, n.UpdatedAt}, nil
+		}),
+	)
+	if err != nil {
+		if isIdempotencyKeyViolation(err) {
+			return domain.ErrDuplicateIdempotencyKey
+		}
+		return fmt.Errorf("copy batch notifications: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit batch insert: %w", err)
+	}
+	return nil
+}
+
+// ExistingIdempotencyKeys returns which of the given keys already have
+// notifications, so batch creation can report duplicates per item
+// instead of failing the whole COPY.
+func (repo *NotificationRepository) ExistingIdempotencyKeys(ctx context.Context, keys []string) (map[string]uuid.UUID, error) {
+	if len(keys) == 0 {
+		return map[string]uuid.UUID{}, nil
+	}
+
+	rows, err := repo.pool.Query(ctx,
+		`SELECT idempotency_key, id FROM notifications WHERE idempotency_key = ANY($1)`, keys)
+	if err != nil {
+		return nil, fmt.Errorf("check existing idempotency keys: %w", err)
+	}
+	defer rows.Close()
+
+	existing := map[string]uuid.UUID{}
+	for rows.Next() {
+		var key string
+		var id uuid.UUID
+		if err := rows.Scan(&key, &id); err != nil {
+			return nil, fmt.Errorf("scan idempotency key: %w", err)
+		}
+		existing[key] = id
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("check existing idempotency keys: %w", err)
+	}
+	return existing, nil
 }
 
 // UpdateStatus transitions a notification's status only if its current
@@ -212,17 +312,47 @@ func scanNotification(row pgx.Row) (domain.Notification, error) {
 	return notification, err
 }
 
-// ListRecent returns the newest notifications, most recent first. The
-// full filtered/paginated listing extends this later.
-func (repo *NotificationRepository) ListRecent(ctx context.Context, limit int) ([]domain.Notification, error) {
-	query := `SELECT ` + notificationColumns + `
-		FROM notifications
-		ORDER BY created_at DESC, id DESC
-		LIMIT $1`
+// List returns notifications matching the query, newest first, using
+// keyset pagination on (created_at, id).
+func (repo *NotificationRepository) List(ctx context.Context, listQuery domain.ListQuery) ([]domain.Notification, error) {
+	sql := `SELECT ` + notificationColumns + ` FROM notifications`
+	var conditions []string
+	var args []any
 
-	rows, err := repo.pool.Query(ctx, query, limit)
+	addCondition := func(condition string, value any) {
+		args = append(args, value)
+		conditions = append(conditions, fmt.Sprintf(condition, len(args)))
+	}
+
+	if listQuery.Status != "" {
+		addCondition("status = $%d", listQuery.Status)
+	}
+	if listQuery.Channel != "" {
+		addCondition("channel = $%d", listQuery.Channel)
+	}
+	if listQuery.BatchID != nil {
+		addCondition("batch_id = $%d", *listQuery.BatchID)
+	}
+	if listQuery.From != nil {
+		addCondition("created_at >= $%d", *listQuery.From)
+	}
+	if listQuery.To != nil {
+		addCondition("created_at <= $%d", *listQuery.To)
+	}
+	if listQuery.CursorCreatedAt != nil && listQuery.CursorID != nil {
+		args = append(args, *listQuery.CursorCreatedAt, *listQuery.CursorID)
+		conditions = append(conditions, fmt.Sprintf("(created_at, id) < ($%d, $%d)", len(args)-1, len(args)))
+	}
+
+	if len(conditions) > 0 {
+		sql += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	args = append(args, listQuery.Limit)
+	sql += fmt.Sprintf(" ORDER BY created_at DESC, id DESC LIMIT $%d", len(args))
+
+	rows, err := repo.pool.Query(ctx, sql, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list recent notifications: %w", err)
+		return nil, fmt.Errorf("list notifications: %w", err)
 	}
 	defer rows.Close()
 
@@ -230,12 +360,12 @@ func (repo *NotificationRepository) ListRecent(ctx context.Context, limit int) (
 	for rows.Next() {
 		notification, err := scanNotification(rows)
 		if err != nil {
-			return nil, fmt.Errorf("scan recent notification: %w", err)
+			return nil, fmt.Errorf("scan listed notification: %w", err)
 		}
 		notifications = append(notifications, notification)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list recent notifications: %w", err)
+		return nil, fmt.Errorf("list notifications: %w", err)
 	}
 	return notifications, nil
 }

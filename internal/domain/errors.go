@@ -15,6 +15,10 @@ var ErrNotFound = errors.New("not found")
 // the state machine (in Go) or the guarded UPDATE (in SQL).
 var ErrInvalidTransition = errors.New("invalid status transition")
 
+// ErrDuplicateIdempotencyKey is returned when a create collides with an
+// existing notification's idempotency key. Callers replay the original.
+var ErrDuplicateIdempotencyKey = errors.New("duplicate idempotency key")
+
 // FieldError describes one invalid input field.
 type FieldError struct {
 	Field   string
