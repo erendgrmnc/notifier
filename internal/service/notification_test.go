@@ -106,13 +106,17 @@ func (clock fixedClock) Now() time.Time { return clock.now }
 
 var testNow = time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
 
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewJSONHandler(io.Discard, nil))
+}
+
 func newTestService(repo *fakeRepository) *NotificationService {
 	return newTestServiceWithPublisher(repo, &fakePublisher{})
 }
 
 func newTestServiceWithPublisher(repo *fakeRepository, publisher *fakePublisher) *NotificationService {
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
-	return NewNotificationService(repo, &fakeBatchRepository{fakeRepository: repo}, publisher, fixedClock{now: testNow}, logger, nil)
+	return NewNotificationService(repo, &fakeBatchRepository{fakeRepository: repo}, &fakeTemplateRepository{}, publisher, fixedClock{now: testNow}, logger, nil)
 }
 
 func TestCreatePublishesAndMarksQueued(t *testing.T) {

@@ -70,12 +70,25 @@ func (svc *NotificationService) CreateBatch(ctx context.Context, inputs []Create
 	for index, input := range inputs {
 		itemResult := BatchItemResult{Index: index, Status: BatchItemAccepted}
 
+		content, err := svc.resolveContent(ctx, input)
+		if err != nil {
+			var validationErrs domain.ValidationErrors
+			if !errors.As(err, &validationErrs) {
+				return BatchResult{}, fmt.Errorf("resolve batch item %d content: %w", index, err)
+			}
+			itemResult.Status = BatchItemRejected
+			itemResult.Errors = validationErrs
+			result.Results[index] = itemResult
+			result.Rejected++
+			continue
+		}
+
 		notification := domain.Notification{
 			ID:             uuid.New(),
 			BatchID:        &batchID,
 			Recipient:      input.Recipient,
 			Channel:        input.Channel,
-			Content:        input.Content,
+			Content:        content,
 			Priority:       input.Priority,
 			Status:         domain.StatusPending,
 			IdempotencyKey: input.IdempotencyKey,

@@ -49,16 +49,35 @@ type Instrumentation interface {
 
 // NotificationService implements the create/query use cases.
 type NotificationService struct {
-	repo      Repository
-	batchRepo BatchRepository
-	publisher Publisher
-	clock     Clock
-	logger    *slog.Logger
-	metrics   Instrumentation
+	repo         Repository
+	batchRepo    BatchRepository
+	templateRepo TemplateRepository
+	publisher    Publisher
+	clock        Clock
+	logger       *slog.Logger
+	metrics      Instrumentation
 }
 
-func NewNotificationService(repo Repository, batchRepo BatchRepository, publisher Publisher, clock Clock, logger *slog.Logger, metrics Instrumentation) *NotificationService {
-	return &NotificationService{repo: repo, batchRepo: batchRepo, publisher: publisher, clock: clock, logger: logger, metrics: metrics}
+func NewNotificationService(repo Repository, batchRepo BatchRepository, templateRepo TemplateRepository, publisher Publisher, clock Clock, logger *slog.Logger, metrics Instrumentation) *NotificationService {
+	return &NotificationService{
+		repo: repo, batchRepo: batchRepo, templateRepo: templateRepo,
+		publisher: publisher, clock: clock, logger: logger, metrics: metrics,
+	}
+}
+
+// resolveContent enforces exactly one of content|template and renders
+// template references into final content.
+func (svc *NotificationService) resolveContent(ctx context.Context, input CreateInput) (string, error) {
+	switch {
+	case input.Template != nil && input.Content != "":
+		return "", domain.ValidationErrors{{Field: "content", Message: "provide either content or template, not both"}}
+	case input.Template == nil:
+		return input.Content, nil // empty content is caught by ValidateNew
+	case svc.templateRepo == nil:
+		return "", domain.ValidationErrors{{Field: "template", Message: "templates are not available"}}
+	default:
+		return renderTemplateContent(ctx, svc.templateRepo, *input.Template, input.Channel)
+	}
 }
 
 func (svc *NotificationService) recordCreated(notification domain.Notification) {
@@ -68,10 +87,12 @@ func (svc *NotificationService) recordCreated(notification domain.Notification) 
 }
 
 // CreateInput carries the validated-shape request for one notification.
+// Exactly one of Content or Template must be set.
 type CreateInput struct {
 	Recipient      string
 	Channel        domain.Channel
 	Content        string
+	Template       *TemplateRef
 	Priority       domain.Priority
 	ScheduledAt    *time.Time
 	IdempotencyKey *string
@@ -91,11 +112,16 @@ type CreateResult struct {
 func (svc *NotificationService) Create(ctx context.Context, input CreateInput) (CreateResult, error) {
 	now := svc.clock.Now()
 
+	content, err := svc.resolveContent(ctx, input)
+	if err != nil {
+		return CreateResult{}, err
+	}
+
 	notification := domain.Notification{
 		ID:             uuid.New(),
 		Recipient:      input.Recipient,
 		Channel:        input.Channel,
-		Content:        input.Content,
+		Content:        content,
 		Priority:       input.Priority,
 		Status:         domain.StatusPending,
 		IdempotencyKey: input.IdempotencyKey,
@@ -114,7 +140,7 @@ func (svc *NotificationService) Create(ctx context.Context, input CreateInput) (
 		return CreateResult{}, err
 	}
 
-	err := svc.repo.Create(ctx, notification)
+	err = svc.repo.Create(ctx, notification)
 	if errors.Is(err, domain.ErrDuplicateIdempotencyKey) && input.IdempotencyKey != nil {
 		existing, lookupErr := svc.repo.GetByIdempotencyKey(ctx, *input.IdempotencyKey)
 		if lookupErr != nil {

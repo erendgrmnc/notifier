@@ -17,6 +17,7 @@ type RouterConfig struct {
 	Logger         *slog.Logger
 	RequestTimeout time.Duration
 	Notifications  NotificationService
+	Templates      TemplateService
 
 	// Observability endpoints; nil-safe for tests.
 	Metrics        HTTPMetrics
@@ -78,6 +79,13 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 		v1.Get("/notifications", notifications.list)
 		v1.Get("/notifications/{id}", notifications.get)
 		v1.Post("/notifications/{id}/cancel", notifications.cancel)
+
+		if cfg.Templates != nil {
+			templates := &templateHandler{templates: cfg.Templates, logger: cfg.Logger}
+			v1.Post("/templates", templates.create)
+			v1.Get("/templates", templates.list)
+			v1.Get("/templates/{name}", templates.get)
+		}
 
 		if cfg.DashboardEnabled {
 			v1.Get("/queues", dashboard.getQueueDepths)

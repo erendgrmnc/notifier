@@ -150,11 +150,14 @@ func run() error {
 
 	var httpServer *http.Server
 	if runsAPI {
-		notifications := service.NewNotificationService(repository, repository, publisher, realClock{}, logger, metrics)
+		templateRepository := postgres.NewTemplateRepository(pool)
+		notifications := service.NewNotificationService(repository, repository, templateRepository, publisher, realClock{}, logger, metrics)
+		templates := service.NewTemplateService(templateRepository, realClock{})
 		router := api.NewRouter(api.RouterConfig{
 			Logger:           logger,
 			RequestTimeout:   requestTimeout,
 			Notifications:    notifications,
+			Templates:        templates,
 			Metrics:          metrics,
 			MetricsHandler:   metrics.Handler(),
 			Readiness:        readiness,

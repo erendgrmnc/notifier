@@ -46,7 +46,7 @@ func TestCreateBatchPartialSuccess(t *testing.T) {
 	batchRepo := &fakeBatchRepository{fakeRepository: repo}
 	publisher := &fakePublisher{}
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
-	svc := NewNotificationService(repo, batchRepo, publisher, fixedClock{now: testNow}, logger, nil)
+	svc := NewNotificationService(repo, batchRepo, &fakeTemplateRepository{}, publisher, fixedClock{now: testNow}, logger, nil)
 
 	duplicateKey := "seen-before"
 	repo.stored[uuid.New()] = domain.Notification{
@@ -101,7 +101,7 @@ func TestCreateBatchScheduledItemsNotPublished(t *testing.T) {
 	batchRepo := &fakeBatchRepository{fakeRepository: repo}
 	publisher := &fakePublisher{}
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
-	svc := NewNotificationService(repo, batchRepo, publisher, fixedClock{now: testNow}, logger, nil)
+	svc := NewNotificationService(repo, batchRepo, &fakeTemplateRepository{}, publisher, fixedClock{now: testNow}, logger, nil)
 
 	future := testNow.Add(time.Hour)
 	scheduled := validBatchInput("later")

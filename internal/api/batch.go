@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"notifier/internal/domain"
 	"notifier/internal/service"
 )
 
@@ -64,14 +63,7 @@ func (handler *notificationHandler) createBatch(writer http.ResponseWriter, requ
 
 	inputs := make([]service.CreateInput, len(payload.Notifications))
 	for i, item := range payload.Notifications {
-		inputs[i] = service.CreateInput{
-			Recipient:      item.Recipient,
-			Channel:        domain.Channel(item.Channel),
-			Content:        item.Content,
-			Priority:       domain.Priority(item.Priority),
-			ScheduledAt:    item.ScheduledAt,
-			IdempotencyKey: item.IdempotencyKey,
-		}
+		inputs[i] = item.toCreateInput()
 	}
 
 	started := time.Now()

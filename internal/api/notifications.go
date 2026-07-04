@@ -36,13 +36,34 @@ type notificationHandler struct {
 	logger        *slog.Logger
 }
 
+type templateRefRequest struct {
+	Name string            `json:"name"`
+	Vars map[string]string `json:"vars"`
+}
+
 type createNotificationRequest struct {
-	Recipient      string     `json:"recipient"`
-	Channel        string     `json:"channel"`
-	Content        string     `json:"content"`
-	Priority       string     `json:"priority,omitempty"`
-	ScheduledAt    *time.Time `json:"scheduled_at,omitempty"`
-	IdempotencyKey *string    `json:"idempotency_key,omitempty"`
+	Recipient      string              `json:"recipient"`
+	Channel        string              `json:"channel"`
+	Content        string              `json:"content"`
+	Template       *templateRefRequest `json:"template,omitempty"`
+	Priority       string              `json:"priority,omitempty"`
+	ScheduledAt    *time.Time          `json:"scheduled_at,omitempty"`
+	IdempotencyKey *string             `json:"idempotency_key,omitempty"`
+}
+
+func (payload createNotificationRequest) toCreateInput() service.CreateInput {
+	input := service.CreateInput{
+		Recipient:      payload.Recipient,
+		Channel:        domain.Channel(payload.Channel),
+		Content:        payload.Content,
+		Priority:       domain.Priority(payload.Priority),
+		ScheduledAt:    payload.ScheduledAt,
+		IdempotencyKey: payload.IdempotencyKey,
+	}
+	if payload.Template != nil {
+		input.Template = &service.TemplateRef{Name: payload.Template.Name, Vars: payload.Template.Vars}
+	}
+	return input
 }
 
 type notificationResponse struct {
@@ -96,14 +117,7 @@ func (handler *notificationHandler) create(writer http.ResponseWriter, request *
 		return
 	}
 
-	result, err := handler.notifications.Create(request.Context(), service.CreateInput{
-		Recipient:      payload.Recipient,
-		Channel:        domain.Channel(payload.Channel),
-		Content:        payload.Content,
-		Priority:       domain.Priority(payload.Priority),
-		ScheduledAt:    payload.ScheduledAt,
-		IdempotencyKey: payload.IdempotencyKey,
-	})
+	result, err := handler.notifications.Create(request.Context(), payload.toCreateInput())
 	if err != nil {
 		handler.writeServiceError(writer, request, err)
 		return
