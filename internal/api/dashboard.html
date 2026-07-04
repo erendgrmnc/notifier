@@ -96,6 +96,11 @@
         <button onclick="sendBurst(1)">Send 1</button>
         <button class="secondary" onclick="sendBurst(10)">Send 10</button>
         <button class="secondary" onclick="sendBurst(100)">Send 100</button>
+        <button class="secondary" onclick="sendBurst(1000)">Send 1000</button>
+      </div>
+      <div class="row">
+        <input id="custom-count" type="number" min="1" max="10000" placeholder="custom count" style="flex:1"/>
+        <button class="secondary" onclick="sendCustom()">Send N</button>
       </div>
       <p class="hint">Include <code>FAILME</code> in content to simulate a provider outage (retries), or <code>REJECTME</code> for a permanent rejection (DLQ).</p>
       <p class="hint" id="send-result"></p>
@@ -142,7 +147,23 @@ async function api(path, options) {
   return response.json();
 }
 
+let burstInFlight = false;
+
+function sendCustom() {
+  const count = parseInt(document.getElementById("custom-count").value, 10);
+  if (!Number.isFinite(count) || count < 1 || count > 10000) {
+    document.getElementById("send-result").textContent = "custom count must be 1-10000";
+    return;
+  }
+  sendBurst(count);
+}
+
+// Bursts run with bounded concurrency so 1000 sends finish in seconds
+// without hammering the API from one tab.
 async function sendBurst(count) {
+  if (burstInFlight) return;
+  burstInFlight = true;
+
   const payload = {
     recipient: document.getElementById("recipient").value,
     channel: document.getElementById("channel").value,
@@ -150,10 +171,12 @@ async function sendBurst(count) {
     priority: document.getElementById("priority").value,
   };
   const result = document.getElementById("send-result");
-  result.textContent = "sending " + count + "…";
-  let accepted = 0, rejected = 0;
-  for (let i = 0; i < count; i++) {
-    const body = count === 1 ? payload : { ...payload, content: payload.content + " #" + (i + 1) };
+  const concurrency = Math.min(count, 20);
+  let started = 0, done = 0, accepted = 0, rejected = 0;
+
+  async function sendOne() {
+    const index = ++started;
+    const body = count === 1 ? payload : { ...payload, content: payload.content + " #" + index };
     try {
       const response = await fetch("/api/v1/notifications", {
         method: "POST",
@@ -162,6 +185,21 @@ async function sendBurst(count) {
       });
       response.status === 201 ? accepted++ : rejected++;
     } catch { rejected++; }
+    done++;
+    if (done % 50 === 0 || done === count) {
+      result.textContent = "sending… " + done + "/" + count;
+    }
+  }
+
+  async function lane() {
+    while (started < count) await sendOne();
+  }
+
+  result.textContent = "sending… 0/" + count;
+  try {
+    await Promise.all(Array.from({ length: concurrency }, lane));
+  } finally {
+    burstInFlight = false;
   }
   result.textContent = "accepted " + accepted + (rejected ? ", rejected " + rejected : "");
   refresh();
