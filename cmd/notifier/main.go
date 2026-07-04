@@ -48,10 +48,15 @@ func run() error {
 
 	logger.Info("starting", slog.String("role", string(cfg.Role)), slog.Int("http_port", cfg.HTTPPort))
 
-	if err := postgres.Migrate(cfg.DatabaseURL); err != nil {
+	migrationsApplied, err := postgres.Migrate(cfg.DatabaseURL)
+	if err != nil {
 		return fmt.Errorf("run migrations: %w", err)
 	}
-	logger.Info("migrations applied")
+	if migrationsApplied {
+		logger.Info("migrations applied")
+	} else {
+		logger.Info("database schema up to date")
+	}
 
 	switch cfg.Role {
 	case config.RoleAPI, config.RoleAll:

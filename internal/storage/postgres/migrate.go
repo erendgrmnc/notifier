@@ -16,13 +16,14 @@ import (
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
-// Migrate applies all pending migrations. golang-migrate takes a
-// Postgres advisory lock, so concurrently booting api and worker
-// processes cannot race each other.
-func Migrate(databaseURL string) error {
+// Migrate applies all pending migrations and reports whether any ran,
+// so callers can log honestly. golang-migrate takes a Postgres advisory
+// lock, so concurrently booting api and worker processes cannot race
+// each other.
+func Migrate(databaseURL string) (applied bool, err error) {
 	source, err := iofs.New(migrationFiles, "migrations")
 	if err != nil {
-		return fmt.Errorf("open embedded migrations: %w", err)
+		return false, fmt.Errorf("open embedded migrations: %w", err)
 	}
 
 	// The service uses one postgres:// URL everywhere; golang-migrate
@@ -31,12 +32,15 @@ func Migrate(databaseURL string) error {
 
 	migrator, err := migrate.NewWithSourceInstance("iofs", source, migrateURL)
 	if err != nil {
-		return fmt.Errorf("create migrator: %w", err)
+		return false, fmt.Errorf("create migrator: %w", err)
 	}
 	defer migrator.Close()
 
-	if err := migrator.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		return fmt.Errorf("apply migrations: %w", err)
+	if err := migrator.Up(); err != nil {
+		if errors.Is(err, migrate.ErrNoChange) {
+			return false, nil
+		}
+		return false, fmt.Errorf("apply migrations: %w", err)
 	}
-	return nil
+	return true, nil
 }
