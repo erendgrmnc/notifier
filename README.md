@@ -137,12 +137,12 @@ curl -X POST localhost:8081/api/v1/notifications \
   -d '{"recipient":"+905551234567","channel":"sms","content":"Hi","idempotency_key":"order-42"}'
 ```
 
-Schedule for later:
+Schedule for later (any future timestamp):
 
 ```bash
 curl -X POST localhost:8081/api/v1/notifications \
   -H 'Content-Type: application/json' \
-  -d '{"recipient":"+905551234567","channel":"sms","content":"Reminder!","scheduled_at":"2026-07-05T09:00:00Z"}'
+  -d '{"recipient":"+905551234567","channel":"sms","content":"Reminder!","scheduled_at":"2030-01-01T09:00:00Z"}'
 ```
 
 Templates render at enqueue time; missing variables are rejected:
