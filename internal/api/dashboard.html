@@ -55,10 +55,16 @@
   /* min-width/height:0 lets grid/flex children shrink and scroll instead
      of overflowing the page */
   .layout > *, .stack > * { min-width: 0; min-height: 0; }
-  .stack { display: flex; flex-direction: column; gap: 14px; min-height: 0; max-height: 100%; }
+  /* Columns scroll when panels outgrow the viewport instead of
+     clipping the bottom panel out of existence. */
+  .stack { display: flex; flex-direction: column; gap: 14px; min-height: 0; max-height: 100%;
+    overflow-y: auto; }
+  .stack > .panel { flex-shrink: 0; }
   .panel { background: var(--panel); border: 1px solid var(--edge); border-radius: 10px; padding: 14px;
     min-width: 0; display: flex; flex-direction: column; min-height: 0; }
-  .panel.fill { flex: 1; }
+  /* Fill panels absorb spare column height but never collapse below a
+     usable size; past that the column scrolls. */
+  .panel.fill { flex: 1; min-height: 150px; }
   .scroll { overflow-y: auto; min-height: 0; }
   .panel.fill > .scroll { flex: 1; }
   @media (max-width: 1100px) {
@@ -184,7 +190,7 @@
     width: 52px; height: 5px; border-radius: 3px; background: var(--edge); }
   .phone::after { content: ""; position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%);
     width: 56px; height: 4px; border-radius: 2px; background: var(--edge); }
-  .phone-screen { height: 100%; overflow: hidden; display: flex; flex-direction: column; gap: 6px; }
+  .phone-screen { height: 100%; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
   .phone-idle { margin: auto; text-align: center; color: var(--dim); }
   .phone-idle .clock { font: 300 26px var(--mono); color: var(--paper); letter-spacing: .04em; }
   .phone-idle .note { font-size: 9.5px; margin-top: 4px; }
@@ -204,7 +210,7 @@
   .mail-header { padding: 6px 11px; border-bottom: 1px solid var(--edge);
     font: 600 9.5px var(--mono); color: var(--dim); letter-spacing: .12em; display: flex; gap: 6px; }
   .mail-header .traffic { color: var(--edge); letter-spacing: 2px; }
-  .mail-rows { flex: 1; overflow: hidden; }
+  .mail-rows { flex: 1; overflow-y: auto; }
   .mail-row { display: flex; gap: 8px; padding: 6px 11px; align-items: baseline;
     border-bottom: 1px solid rgba(38,50,82,.4); font-size: 11px; min-width: 0; }
   .mail-row .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--info); flex-shrink: 0; align-self: center; }
@@ -1273,6 +1279,17 @@ function renderNotifications(rows) {
 // ids seen in a previous render carry no .new class.
 const seenDeviceMessages = new Set();
 
+// Devices repaint every second; a naive innerHTML swap would yank the
+// user's scroll position back. Restore their place — or, for the
+// bottom-anchored phone thread, stay glued to the newest message when
+// they were already reading it.
+function repaintScrollable(element, html, stickToBottom) {
+  const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 40;
+  const previousTop = element.scrollTop;
+  element.innerHTML = html;
+  element.scrollTop = stickToBottom && nearBottom ? element.scrollHeight : previousTop;
+}
+
 function renderClients(messages) {
   document.getElementById("strip-delivered").textContent = messages.length >= 200 ? "200+" : messages.length;
 
@@ -1281,13 +1298,15 @@ function renderClients(messages) {
 
   // Phone: push banners pinned top (newest first), sms thread bottom
   // (oldest of the visible window on top, like a real conversation).
-  const pushes = messages.filter(m => m.channel === "push").slice(0, 2);
-  const smses = messages.filter(m => m.channel === "sms").slice(0, 4).reverse();
+  // Windows are generous and the screen scrolls; the provider store
+  // itself caps at 200.
+  const pushes = messages.filter(m => m.channel === "push").slice(0, 6);
+  const smses = messages.filter(m => m.channel === "sms").slice(0, 30).reverse();
   const phone = document.getElementById("phone-screen");
   if (!pushes.length && !smses.length) {
     phone.innerHTML = `<div class="phone-idle"><div class="clock">${clock}</div><div class="note">no messages</div></div>`;
   } else {
-    phone.innerHTML =
+    repaintScrollable(phone,
       pushes.map(message =>
         `<div class="push-banner${newClass(message)}"><span class="app">notifier · push</span><br>` +
         `${escapeHTML(message.content.slice(0, 70))}</div>`
@@ -1296,21 +1315,21 @@ function renderClients(messages) {
       smses.map(message =>
         `<div class="sms-bubble${newClass(message)}">${escapeHTML(message.content.slice(0, 80))}` +
         `<span class="t">${new Date(message.received_at).toLocaleTimeString()}</span></div>`
-      ).join("") + `</div>`;
+      ).join("") + `</div>`, true);
   }
 
   // Desktop: inbox rows, newest on top.
-  const emails = messages.filter(m => m.channel === "email").slice(0, 5);
+  const emails = messages.filter(m => m.channel === "email").slice(0, 50);
   const mailRows = document.getElementById("mail-rows");
   if (!emails.length) {
     mailRows.innerHTML = `<div class="mail-empty">📭 inbox zero</div>`;
   } else {
-    mailRows.innerHTML = emails.map(message =>
+    repaintScrollable(mailRows, emails.map(message =>
       `<div class="mail-row${newClass(message)}"><span class="dot"></span>` +
       `<span class="from">${escapeHTML(message.to.slice(0, 14))}</span>` +
       `<span class="subj">${escapeHTML(message.content.slice(0, 60))}</span>` +
       `<span class="t">${new Date(message.received_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span></div>`
-    ).join("");
+    ).join(""), false);
   }
 
   for (const message of messages) seenDeviceMessages.add(message.message_id);
