@@ -26,7 +26,10 @@ services:
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      # ping answers before the AMQP listener accepts connections;
+      # check_port_connectivity verifies listeners are actually up, which
+      # is the readiness that depends_on consumers need.
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
       interval: 5s
       timeout: 5s
       retries: 10
