@@ -25,15 +25,61 @@ works offline. To deliver to webhook.site instead, either set
 `PROVIDER_URL=https://webhook.site/<uuid>` before `docker compose up`, or
 paste the URL into the dashboard's Provider panel at runtime.
 
-### The dashboard
+The fastest way to evaluate the system is the built-in
+[testing dashboard](#the-testing-dashboard).
 
-The dashboard is the fastest way to evaluate the system: send single,
-scheduled, templated, or batch notifications; run one-click scenarios
-(idempotency, retry, dead letter, cancel, priority, rate limit,
-scheduling, templates, batch); pause and resume the worker; watch queues
-drain, WebSocket events stream, and messages land on simulated devices.
-Every action is traced in the wire log with real request and response
-summaries.
+## The testing dashboard
+
+![Testing dashboard](docs/dashboard.png)
+
+A single-page control room served at `/dashboard` (gated by
+`DASHBOARD_ENABLED`, on by default in compose). It exists so every
+feature of the system can be demonstrated live, without curl or any
+external tooling. The header strip shows totals, queue depth, delivered
+count, the WebSocket live indicator, and a worker pause switch that
+stops and resumes consumption across processes.
+
+**Send** (right column) covers every create path: single sends, bursts
+of 10/100/1000 or a custom count, sent either as individual requests or
+as one batch request so both API shapes are comparable on the wire.
+Content can come from raw text or a stored template with variable
+inputs, at any priority, delivered now or scheduled. Two content markers
+steer the mock provider: `FAILME` makes delivery fail with a retryable
+error (watch it climb the retry tiers), `REJECTME` fails it permanently
+into the dead letter queue.
+
+**Provider** switches where deliveries go at runtime: the built-in mock
+(default, feeds the client devices) or any webhook.site URL, taking
+effect within about two seconds and no restart. **Templates** lists
+stored templates and creates new ones in a modal.
+
+**Scenarios** (left column) are one-click acceptance tests: idempotency
+replay, retry ladder, dead letter, cancel and cancel conflict, priority
+ordering under backlog, the 100/s rate limit, scheduling, template
+rendering, and batch partial success. Each runs against the real API
+and reports pass or fail with a step-by-step trace. **Pipeline metrics**
+above them merges Prometheus counters from both api and worker with
+lifetime totals from the database.
+
+**The center column** is the live system view. The wire log records
+every API call the dashboard makes with method, path, status, and a
+summary of the request and response bodies, including error messages.
+Queue meters show ready counts for the three channel queues, the retry
+tiers, and the DLQ. The notifications table streams the latest rows
+with batch IDs, status chips, attempt counts, scheduled countdowns, and
+provider message IDs. At the bottom, simulated client devices (a phone
+for SMS and push, a desktop inbox for email) animate as the mock
+provider receives messages, next to the live stream panel, a WebSocket
+connection manager where connections can be stopped, started, and added
+with an optional per-notification filter; its feed shows every status
+event as it happens, including the provider's actual response body on
+successful deliveries.
+
+A 60-second demo: send one notification and watch it flow wire log,
+queue, table, event feed, phone. Send 1000 as a batch and watch the
+queues drain at the rate limit. Click the retry scenario and watch the
+attempts climb. Pause the worker, send a burst, watch queues fill, then
+resume.
 
 ## Architecture
 
